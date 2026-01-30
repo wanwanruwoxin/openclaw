@@ -71,3 +71,7 @@ USER.md
 
 # local tooling
 .serena/
+
+.trae/
+.claude/
+.codex/
