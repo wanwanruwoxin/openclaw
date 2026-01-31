@@ -1,0 +1,32 @@
+{
+  "name": "@openclaw/proluofire-im",
+  "version": "2026.1.29",
+  "type": "module",
+  "description": "OpenClaw proluofire-im channel plugin",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "proluofire-im",
+      "label": "Proluofire IM",
+      "selectionLabel": "Proluofire IM (plugin)",
+      "docsPath": "/channels/proluofire-im",
+      "docsLabel": "proluofire-im",
+      "blurb": "custom IM system; install the plugin to enable.",
+      "order": 80,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@openclaw/proluofire-im",
+      "localPath": "extensions/proluofire-im",
+      "defaultChoice": "npm"
+    }
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  }
+}
