@@ -1,9 +1,13 @@
+import { Buffer } from "node:buffer";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { createReadStream, createWriteStream } from "node:fs";
-import { pipeline } from "node:stream/promises";
-import type { ProluofireImAttachment } from "./types.js";
+
+import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk";
+
+import type { CoreConfig, ProluofireImAttachment } from "./types.js";
+import { resolveProluofireImAuth } from "./client.js";
+import { getProluofireImRuntime } from "./runtime.js";
 
 // Temporary file tracking for cleanup
 const tempFiles = new Set<string>();
@@ -18,6 +22,8 @@ const tempFiles = new Set<string>();
  * - Return attachment reference
  */
 export async function uploadMedia(params: {
+  cfg?: CoreConfig;
+  accountId?: string;
   filePath: string;
   mimeType?: string;
   maxSizeMb?: number;
@@ -25,48 +31,76 @@ export async function uploadMedia(params: {
   const { filePath, mimeType, maxSizeMb = 50 } = params;
 
   try {
-    // Check file exists
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`File not found: ${filePath}`);
-    }
+    const runtime = getProluofireImRuntime();
+    const cfg = params.cfg ?? (runtime.config.loadConfig() as CoreConfig);
+    const accountId = params.accountId ?? DEFAULT_ACCOUNT_ID;
+    const auth = await resolveProluofireImAuth({ cfg, accountId });
+    const baseUrl = auth.serverUrl.trim().replace(/\/+$/, "");
+    const uploadUrl = `${baseUrl}/api/v1/media/upload`;
 
-    // Get file stats
-    const stats = fs.statSync(filePath);
-    const fileSizeMb = stats.size / (1024 * 1024);
-
-    // Check size limit
-    if (fileSizeMb > maxSizeMb) {
-      throw new Error(`File size ${fileSizeMb.toFixed(2)}MB exceeds limit of ${maxSizeMb}MB`);
-    }
-
-    // Detect MIME type if not provided
-    const detectedMimeType = mimeType || (await detectMimeType(filePath));
+    const maxBytes = Math.max(1, maxSizeMb) * 1024 * 1024;
+    const loaded = await runtime.media.loadWebMedia(filePath, maxBytes);
+    const overrideMime = mimeType?.trim();
+    const detectedMimeType =
+      overrideMime || loaded.contentType || (await detectMimeType(filePath));
 
     // Validate media type
     validateMediaType(detectedMimeType);
 
-    console.log(`[proluofire-im] Uploading media: ${path.basename(filePath)} (${fileSizeMb.toFixed(2)}MB)`);
+    const authHeader = buildAuthHeader({
+      apiKey: auth.apiKey,
+      username: auth.username,
+      password: auth.password,
+    });
 
-    // TODO: Implement actual upload
-    // For large files (>10MB), use streaming:
-    // const stream = createReadStream(filePath);
-    // const uploadResponse = await client.uploadMediaStream(stream, {
-    //   mimeType: detectedMimeType,
-    //   filename: path.basename(filePath),
-    //   size: stats.size
-    // });
+    const form = new FormData();
+    const bytes = Uint8Array.from(loaded.buffer);
+    const blob = detectedMimeType ? new Blob([bytes], { type: detectedMimeType }) : new Blob([bytes]);
+    const fileName = loaded.fileName || path.basename(filePath) || "upload";
+    form.append(
+      "file",
+      blob,
+      fileName,
+    );
 
-    // Stub: return mock attachment
-    const attachment: ProluofireImAttachment = {
-      id: `media_${Date.now()}`,
-      type: detectedMimeType,
-      url: `https://example.com/media/${Date.now()}`, // TODO: Replace with actual URL
-      filename: path.basename(filePath),
-      size: stats.size,
-      mimeType: detectedMimeType,
+    const response = await fetch(uploadUrl, {
+      method: "POST",
+      headers: authHeader ? { Authorization: authHeader } : undefined,
+      body: form,
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        `Upload failed (${response.status}): ${detail || response.statusText}`,
+      );
+    }
+
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const id =
+      typeof payload.id === "string"
+        ? payload.id
+        : typeof payload.messageId === "string"
+          ? payload.messageId
+          : typeof payload.attachmentId === "string"
+            ? payload.attachmentId
+            : `media_${Date.now()}`;
+    const url =
+      (typeof payload.url === "string" && payload.url) ||
+      (typeof payload.downloadUrl === "string" && payload.downloadUrl) ||
+      (typeof payload.href === "string" && payload.href) ||
+      response.headers.get("location") ||
+      "";
+
+    return {
+      id,
+      type: (typeof payload.type === "string" && payload.type) || detectedMimeType,
+      url,
+      filename: (typeof payload.filename === "string" && payload.filename) || fileName,
+      size: typeof payload.size === "number" ? payload.size : loaded.buffer.length,
+      mimeType:
+        (typeof payload.mimeType === "string" && payload.mimeType) || detectedMimeType,
     };
-
-    return attachment;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to upload media: ${errorMsg}`);
@@ -83,6 +117,8 @@ export async function uploadMedia(params: {
  * - Return file path
  */
 export async function downloadMedia(params: {
+  cfg?: CoreConfig;
+  accountId?: string;
   attachment: ProluofireImAttachment;
   maxSizeMb?: number;
 }): Promise<string> {
@@ -102,15 +138,32 @@ export async function downloadMedia(params: {
     const filename = attachment.filename || `download_${Date.now()}`;
     const tempPath = path.join(tempDir, `proluofire_im_${filename}`);
 
-    console.log(`[proluofire-im] Downloading media: ${attachment.id} to ${tempPath}`);
+    if (!attachment.url) {
+      throw new Error("Attachment URL is missing");
+    }
 
-    // TODO: Implement actual download
-    // For large files, use streaming:
-    // const response = await client.downloadMediaStream(attachment.id);
-    // await pipeline(response.stream, createWriteStream(tempPath));
+    const runtime = getProluofireImRuntime();
+    const cfg = params.cfg ?? (runtime.config.loadConfig() as CoreConfig);
+    const accountId = params.accountId ?? DEFAULT_ACCOUNT_ID;
+    const auth = await resolveProluofireImAuth({ cfg, accountId });
+    const authHeader = buildAuthHeader({
+      apiKey: auth.apiKey,
+      username: auth.username,
+      password: auth.password,
+    });
 
-    // Stub: create empty file
-    fs.writeFileSync(tempPath, "");
+    const response = await fetch(attachment.url, {
+      headers: authHeader ? { Authorization: authHeader } : undefined,
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        `Download failed (${response.status}): ${detail || response.statusText}`,
+      );
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    fs.writeFileSync(tempPath, buffer);
 
     // Track for cleanup
     tempFiles.add(tempPath);
@@ -151,6 +204,20 @@ async function detectMimeType(filePath: string): Promise<string> {
   };
 
   return mimeTypes[ext] || "application/octet-stream";
+}
+
+function buildAuthHeader(params: {
+  apiKey?: string;
+  username?: string;
+  password?: string;
+}): string | undefined {
+  if (params.apiKey?.trim()) {
+    return `Bearer ${params.apiKey.trim()}`;
+  }
+  if (params.username && params.password) {
+    return `Basic ${Buffer.from(`${params.username}:${params.password}`).toString("base64")}`;
+  }
+  return undefined;
 }
 
 /**

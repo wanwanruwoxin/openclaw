@@ -1,48 +1,120 @@
+import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk";
+
 import { createProluofireImClient, resolveProluofireImAuth } from "./client.js";
-import { encodeMessage, convertMarkdownToProluofireIm, convertMentionsToProluofireIm, normalizeTarget } from "./protocol.js";
-import { markOutboundMessage } from "./runtime.js";
-import type { CoreConfig, SendMessageOptions } from "./types.js";
+import {
+  convertMarkdownToProluofireIm,
+  convertMentionsToProluofireIm,
+  encodeMessage,
+  normalizeTarget,
+} from "./protocol.js";
+import { getClientForAccount, getProluofireImRuntime, markOutboundMessage } from "./runtime.js";
+import type { CoreConfig, ProluofireImClient, SendMessageOptions } from "./types.js";
 
 // Rate limiting state
 const rateLimitState = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
 const RATE_LIMIT_MAX_MESSAGES = 20; // Max messages per window
 
+export type ProluofireImSendOptions = SendMessageOptions & {
+  cfg?: CoreConfig;
+  accountId?: string;
+  client?: ProluofireImClient;
+};
+
+type ProluofireImSendResult = {
+  messageId: string;
+  to: string;
+};
+
+async function resolveClientForSend(params: {
+  cfg: CoreConfig;
+  accountId: string;
+  client?: ProluofireImClient;
+}): Promise<{ client: ProluofireImClient; release: () => Promise<void> }> {
+  if (params.client) {
+    return { client: params.client, release: async () => {} };
+  }
+  const existing = getClientForAccount(params.accountId);
+  if (existing) {
+    return { client: existing, release: async () => {} };
+  }
+  const auth = await resolveProluofireImAuth({
+    cfg: params.cfg,
+    accountId: params.accountId,
+  });
+  const client = await createProluofireImClient(auth);
+  await client.connect();
+  return {
+    client,
+    release: async () => {
+      try {
+        await client.disconnect();
+      } catch {
+        // Ignore disconnect errors for ephemeral clients.
+      }
+    },
+  };
+}
+
 /**
- * Send a message via proluofire-im
- *
- * TODO: Integrate with actual proluofire-im SDK for message sending
+ * Send a message via proluofire-im.
  */
 export async function sendMessageProluofireIm(
   target: string,
   content: string,
-  options?: SendMessageOptions,
-): Promise<void> {
+  options?: ProluofireImSendOptions,
+): Promise<ProluofireImSendResult> {
   try {
+    const runtime = getProluofireImRuntime();
+    const cfg =
+      options?.cfg ?? (runtime.config.loadConfig() as CoreConfig);
+    const accountId = options?.accountId ?? DEFAULT_ACCOUNT_ID;
+
     // Normalize target
     const normalizedTarget = normalizeTarget(target);
+    if (!normalizedTarget) {
+      throw new Error("Target cannot be empty");
+    }
 
     // Check rate limit
     await checkRateLimit(normalizedTarget);
 
     // Encode and format message
-    const encodedContent = encodeMessage(content);
+    const tableMode = runtime.channel.text.resolveMarkdownTableMode({
+      cfg,
+      channel: "proluofire-im",
+      accountId,
+    });
+    const normalizedContent = runtime.channel.text.convertMarkdownTables(
+      content ?? "",
+      tableMode,
+    );
+    const encodedContent = encodeMessage(normalizedContent);
     const formattedContent = convertMarkdownToProluofireIm(encodedContent);
     const finalContent = convertMentionsToProluofireIm(formattedContent);
 
-    // TODO: Get client instance and send message
-    // This is a stub - replace with actual implementation
-    console.log(`[proluofire-im] Sending message to ${normalizedTarget}: ${finalContent.substring(0, 50)}...`);
-
-    // TODO: Implement actual sending logic
-    // const client = await getOrCreateClient();
-    // await client.sendMessage(normalizedTarget, finalContent, options);
+    const { client, release } = await resolveClientForSend({
+      cfg,
+      accountId,
+      client: options?.client,
+    });
+    let messageId = "";
+    try {
+      messageId = await client.sendMessage(normalizedTarget, finalContent, options);
+    } finally {
+      await release();
+    }
 
     // Update rate limit
     updateRateLimit(normalizedTarget);
 
     // Mark outbound message (for status tracking)
-    markOutboundMessage("default");
+    markOutboundMessage(accountId);
+
+    return {
+      messageId: messageId || `${Date.now()}`,
+      to: normalizedTarget,
+    };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to send message to ${target}: ${errorMsg}`);
@@ -57,7 +129,7 @@ export async function sendMessageProluofireIm(
 export async function sendDirectMessage(
   userId: string,
   content: string,
-  options?: SendMessageOptions,
+  options?: ProluofireImSendOptions,
 ): Promise<void> {
   try {
     // Ensure target is formatted as user identifier
@@ -78,7 +150,7 @@ export async function sendDirectMessage(
 export async function sendGroupMessage(
   groupId: string,
   content: string,
-  options?: SendMessageOptions,
+  options?: ProluofireImSendOptions,
 ): Promise<void> {
   try {
     // Ensure target is formatted as group identifier
@@ -139,7 +211,7 @@ function updateRateLimit(target: string): void {
 export async function sendMessageWithRetry(
   target: string,
   content: string,
-  options?: SendMessageOptions,
+  options?: ProluofireImSendOptions,
   maxRetries = 3,
 ): Promise<void> {
   let lastError: Error | null = null;
@@ -216,26 +288,11 @@ export async function sendMessageWithMedia(
   target: string,
   content: string,
   attachments: Array<{ path: string; type: string }>,
-  options?: SendMessageOptions,
+  options?: ProluofireImSendOptions,
 ): Promise<void> {
-  try {
-    // TODO: Upload attachments and get references
-    // const uploadedAttachments = await Promise.all(
-    //   attachments.map(att => uploadMedia(att.path, att.type))
-    // );
-
-    // TODO: Send message with attachment references
-    // await sendMessageProluofireIm(target, content, {
-    //   ...options,
-    //   attachments: uploadedAttachments
-    // });
-
-    console.log(`[proluofire-im] Sending message with ${attachments.length} attachments to ${target}`);
-
-    // Stub: send without attachments for now
-    await sendMessageProluofireIm(target, content, options);
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to send message with media: ${errorMsg}`);
-  }
+  void target;
+  void content;
+  void attachments;
+  void options;
+  throw new Error("Proluofire IM media sends are not supported yet");
 }

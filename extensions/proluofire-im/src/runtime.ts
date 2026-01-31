@@ -1,5 +1,7 @@
 import type { PluginRuntime } from "openclaw/plugin-sdk";
 
+import type { ProluofireImClient } from "./types.js";
+
 let runtime: PluginRuntime | null = null;
 
 /**
@@ -34,6 +36,7 @@ export interface ProluofireImRuntimeState {
 }
 
 const runtimeStates = new Map<string, ProluofireImRuntimeState>();
+const clientRegistry = new Map<string, ProluofireImClient>();
 
 /**
  * Get runtime state for an account
@@ -105,4 +108,28 @@ export function markOutboundMessage(accountId: string): void {
   updateRuntimeState(accountId, {
     lastOutboundAt: Date.now(),
   });
+}
+
+/**
+ * Register a connected client for an account.
+ */
+export function registerClientForAccount(accountId: string, client: ProluofireImClient): void {
+  clientRegistry.set(accountId, client);
+}
+
+/**
+ * Remove a client registration for an account.
+ */
+export function unregisterClientForAccount(accountId: string, client?: ProluofireImClient): void {
+  const existing = clientRegistry.get(accountId);
+  if (existing && (!client || existing === client)) {
+    clientRegistry.delete(accountId);
+  }
+}
+
+/**
+ * Return a registered client for an account if available.
+ */
+export function getClientForAccount(accountId: string): ProluofireImClient | null {
+  return clientRegistry.get(accountId) ?? null;
 }

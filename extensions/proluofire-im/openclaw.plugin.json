@@ -1,0 +1,11 @@
+{
+  "id": "proluofire-im",
+  "channels": [
+    "proluofire-im"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

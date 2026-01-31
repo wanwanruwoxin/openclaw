@@ -160,7 +160,7 @@ const response = await makeRequest('/api/v1/messages', {
 
 ```yaml
 channels:
-  proluofireIm:
+  proluofire-im:
     enabled: true
     serverUrl: https://your-proluofire-server.com
     apiKey: your_bearer_token_here  # 用作 Bearer Token
@@ -223,7 +223,7 @@ openclaw channels setup proluofire-im \
 openclaw channels status proluofire-im --deep
 
 # Send test message
-openclaw message send proluofire-im @testuser "Hello!"
+openclaw message send --channel proluofire-im --target 42 --message "Hello!"
 
 # Start gateway
 openclaw gateway run

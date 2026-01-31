@@ -3,7 +3,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk";
 // Core configuration type extending OpenClaw's config
 export interface CoreConfig extends OpenClawConfig {
   channels?: {
-    proluofireIm?: ProluofireImChannelConfig;
+    "proluofire-im"?: ProluofireImChannelConfig;
     [key: string]: unknown;
   };
 }
@@ -13,6 +13,8 @@ export interface ProluofireImChannelConfig {
   enabled?: boolean;
   name?: string;
   serverUrl?: string;
+  wsUrl?: string;
+  webhookPath?: string;
   apiKey?: string;
   username?: string;
   password?: string;
@@ -20,7 +22,7 @@ export interface ProluofireImChannelConfig {
     policy?: "pairing" | "allowlist" | "open";
     allowFrom?: string[];
   };
-  groupPolicy?: "allowlist" | "open";
+  groupPolicy?: "allowlist" | "open" | "disabled";
   groups?: Record<string, ProluofireImGroupConfig>;
   groupAllowFrom?: string[];
   mediaMaxMb?: number;
@@ -30,6 +32,7 @@ export interface ProluofireImChannelConfig {
 // Group configuration
 export interface ProluofireImGroupConfig {
   users?: string[];
+  requireMention?: boolean;
 }
 
 // Account configuration (for multi-account support)
@@ -37,6 +40,8 @@ export interface ProluofireImAccountConfig {
   enabled?: boolean;
   name?: string;
   serverUrl?: string;
+  wsUrl?: string;
+  webhookPath?: string;
   apiKey?: string;
   username?: string;
   password?: string;
@@ -44,7 +49,7 @@ export interface ProluofireImAccountConfig {
     policy?: "pairing" | "allowlist" | "open";
     allowFrom?: string[];
   };
-  groupPolicy?: "allowlist" | "open";
+  groupPolicy?: "allowlist" | "open" | "disabled";
   groups?: Record<string, ProluofireImGroupConfig>;
   groupAllowFrom?: string[];
   mediaMaxMb?: number;
@@ -57,6 +62,7 @@ export interface ResolvedProluofireImAccount {
   enabled: boolean;
   configured: boolean;
   serverUrl: string;
+  wsUrl?: string;
   apiKey?: string;
   username?: string;
   password?: string;
@@ -88,7 +94,7 @@ export interface ProluofireImAttachment {
 export interface ProluofireImClient {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
-  sendMessage(target: string, content: string, options?: SendMessageOptions): Promise<void>;
+  sendMessage(target: string, content: string, options?: SendMessageOptions): Promise<string>;
   onMessage(handler: (message: ProluofireImMessage) => void): void;
   onConnectionStatus(handler: (status: ConnectionStatus) => void): void;
 }
@@ -97,9 +103,15 @@ export interface SendMessageOptions {
   threadId?: string;
   replyToId?: string;
   attachments?: ProluofireImAttachment[];
+  localId?: string;
 }
 
 export interface ConnectionStatus {
   connected: boolean;
   error?: string;
 }
+
+export type ProluofireImClientInternal = ProluofireImClient & {
+  _triggerMessage?: (message: ProluofireImMessage) => void;
+  _triggerStatus?: (status: ConnectionStatus) => void;
+};

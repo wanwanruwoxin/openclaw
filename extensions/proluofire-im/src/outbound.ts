@@ -1,33 +1,34 @@
 import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk";
 import type { CoreConfig } from "./types.js";
 import { sendMessageProluofireIm } from "./send.js";
-import { uploadMedia } from "./media.js";
+import { getProluofireImRuntime } from "./runtime.js";
 
 /**
  * Outbound message handler for proluofire-im
  */
 export const proluofireImOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
-  chunker: null,
-  chunkerMode: "text",
+  chunker: (text, limit) => getProluofireImRuntime().channel.text.chunkMarkdownText(text, limit),
+  chunkerMode: "markdown",
   textChunkLimit: 4000,
 
-  sendText: async ({ cfg, to, text }) => {
-    await sendMessageProluofireIm(to, text);
+  sendText: async ({ cfg, to, text, accountId, replyToId, threadId }) => {
+    const normalizedThreadId =
+      threadId === null || threadId === undefined ? undefined : String(threadId);
+    const result = await sendMessageProluofireIm(to, text, {
+      cfg: cfg as CoreConfig,
+      accountId: accountId ?? undefined,
+      replyToId: replyToId ?? undefined,
+      threadId: normalizedThreadId,
+    });
     return {
       channel: "proluofire-im" as const,
-      messageId: `${Date.now()}`,
-      to
+      messageId: result.messageId,
+      to,
     };
   },
 
-  sendMedia: async ({ cfg, to, text, mediaUrl }) => {
-    // TODO: Implement media sending with proluofire-im
-    await sendMessageProluofireIm(to, text);
-    return {
-      channel: "proluofire-im" as const,
-      messageId: `${Date.now()}`,
-      to
-    };
+  sendMedia: async () => {
+    throw new Error("Proluofire IM media sends are not supported yet");
   },
 };

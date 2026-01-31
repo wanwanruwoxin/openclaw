@@ -2,6 +2,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 
 import { proluofireImPlugin } from "./src/channel.js";
+import { handleProluofireImWebhookRequest } from "./src/monitor.js";
 import { setProluofireImRuntime } from "./src/runtime.js";
 
 const plugin = {
@@ -12,6 +13,7 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     setProluofireImRuntime(api.runtime);
     api.registerChannel({ plugin: proluofireImPlugin });
+    api.registerHttpHandler(handleProluofireImWebhookRequest);
   },
 };
 

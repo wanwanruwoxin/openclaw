@@ -1,5 +1,66 @@
 import type { ProluofireImMessage } from "./types.js";
 
+function stripProluofireImPrefix(value: string): string {
+  return value.replace(/^proluofire-im:/i, "").trim();
+}
+
+function isNumericId(value: string): boolean {
+  return /^\d+$/.test(value);
+}
+
+export function normalizeProluofireImAllowEntry(value: string): string {
+  const trimmed = stripProluofireImPrefix(value);
+  if (!trimmed) return "";
+  if (trimmed === "*") return "*";
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("user:")) {
+    return lower.slice("user:".length).trim();
+  }
+  if (lower.startsWith("group:")) {
+    return lower.slice("group:".length).trim();
+  }
+  const withoutPrefix = trimmed.startsWith("@") || trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+  return withoutPrefix.trim().toLowerCase();
+}
+
+export function normalizeProluofireImUserId(value: string): string {
+  const trimmed = stripProluofireImPrefix(value);
+  if (!trimmed) return "";
+  if (trimmed === "*") return "*";
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("user:")) {
+    return lower.slice("user:".length).trim();
+  }
+  const withoutPrefix = trimmed.replace(/^[@#]/, "");
+  return withoutPrefix.trim().toLowerCase();
+}
+
+export function normalizeProluofireImGroupId(value: string): string {
+  const trimmed = stripProluofireImPrefix(value);
+  if (!trimmed) return "";
+  if (trimmed === "*") return "*";
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("group:")) {
+    return lower.slice("group:".length).trim();
+  }
+  const withoutPrefix = trimmed.replace(/^[@#]/, "");
+  return withoutPrefix.trim().toLowerCase();
+}
+
+export function formatProluofireImUserEntry(value: string): string {
+  const normalized = normalizeProluofireImUserId(value);
+  if (!normalized) return "";
+  if (normalized === "*") return "*";
+  return `@${normalized}`;
+}
+
+export function formatProluofireImGroupEntry(value: string): string {
+  const normalized = normalizeProluofireImGroupId(value);
+  if (!normalized) return "";
+  if (normalized === "*") return "*";
+  return `#${normalized}`;
+}
+
 /**
  * Encode OpenClaw message content to proluofire-im format
  *
@@ -27,9 +88,9 @@ export function decodeMessage(message: ProluofireImMessage): {
   threadId?: string;
   replyToId?: string;
 } {
-  // TODO: Replace with actual decoding logic
+  const content = convertProluofireImToMarkdown(message.content);
   return {
-    content: message.content,
+    content,
     from: message.from,
     timestamp: message.timestamp,
     threadId: message.threadId,
@@ -147,40 +208,41 @@ export function resolveTarget(target: string): {
   id: string;
   normalized: string;
 } {
-  // TODO: Replace with actual target resolution logic
-  // Determine if target is a user or group
-  // Normalize identifier format
-  // Validate identifier
+  const normalized = normalizeTarget(target);
+  if (!normalized) {
+    throw new Error("Target cannot be empty");
+  }
 
-  // Stub: simple heuristic
-  const trimmed = target.trim();
-
-  // Example heuristics (replace with actual logic):
-  // - If starts with #, it's a group/channel
-  // - If starts with @, it's a user
-  // - Otherwise, check format or query API
-
-  if (trimmed.startsWith("#")) {
+  if (normalized.startsWith("#")) {
     return {
       type: "group",
-      id: trimmed.slice(1),
-      normalized: trimmed,
+      id: normalized.slice(1),
+      normalized,
     };
   }
 
-  if (trimmed.startsWith("@")) {
+  if (normalized.startsWith("@")) {
     return {
       type: "user",
-      id: trimmed.slice(1),
-      normalized: trimmed,
+      id: normalized.slice(1),
+      normalized,
     };
   }
 
-  // Default to user
+  // Default to group for numeric room IDs.
+  if (isNumericId(normalized)) {
+    return {
+      type: "group",
+      id: normalized,
+      normalized: `#${normalized}`,
+    };
+  }
+
+  // Default to group (room) targets.
   return {
-    type: "user",
-    id: trimmed,
-    normalized: trimmed,
+    type: "group",
+    id: normalized,
+    normalized,
   };
 }
 
@@ -190,10 +252,20 @@ export function resolveTarget(target: string): {
  * TODO: Implement target normalization based on proluofire-im requirements
  */
 export function normalizeTarget(target: string): string {
-  // TODO: Replace with actual normalization logic
-  // Apply proluofire-im's identifier format rules
-
-  return target.trim();
+  const trimmed = stripProluofireImPrefix(target);
+  if (!trimmed) return "";
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("user:")) {
+    const id = normalizeProluofireImUserId(trimmed);
+    return id ? `@${id}` : "";
+  }
+  if (lower.startsWith("group:")) {
+    const id = normalizeProluofireImGroupId(trimmed);
+    return id ? `#${id}` : "";
+  }
+  if (trimmed.startsWith("@") || trimmed.startsWith("#")) return trimmed;
+  if (isNumericId(trimmed)) return `#${trimmed}`;
+  return trimmed;
 }
 
 /**
@@ -202,15 +274,12 @@ export function normalizeTarget(target: string): string {
  * TODO: Implement target validation based on proluofire-im rules
  */
 export function validateTarget(target: string): { valid: boolean; error?: string } {
-  // TODO: Replace with actual validation logic
-  // Check if target matches proluofire-im's identifier format
-
-  const trimmed = target.trim();
-
-  if (!trimmed) {
+  const normalized = normalizeTarget(target);
+  if (!normalized) {
     return { valid: false, error: "Target cannot be empty" };
   }
-
-  // Stub: basic validation
+  if (normalized === "@" || normalized === "#") {
+    return { valid: false, error: "Target is missing identifier" };
+  }
   return { valid: true };
 }

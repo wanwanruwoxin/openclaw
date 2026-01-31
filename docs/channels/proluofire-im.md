@@ -7,10 +7,9 @@ Connect OpenClaw to your Proluofire IM server for AI-powered messaging.
 The Proluofire IM plugin enables OpenClaw to send and receive messages through your custom Proluofire IM system. This plugin provides:
 
 - **Bidirectional messaging**: Send and receive text messages
-- **Media support**: Share images, videos, documents, and other files
+- **Text-only for now**: Media and threads are not supported yet
 - **Security policies**: Control who can message your AI with DM and group policies
 - **Multi-account support**: Connect multiple Proluofire IM accounts
-- **Thread support**: Maintain conversation context with threading
 
 ## Installation
 
@@ -59,9 +58,10 @@ The minimal configuration requires a server URL and authentication:
 
 ```yaml
 channels:
-  proluofireIm:
+  proluofire-im:
     enabled: true
     serverUrl: https://your-proluofire-server.com
+    wsUrl: wss://your-proluofire-server.com/ws
     apiKey: YOUR_API_KEY  # or username/password
 ```
 
@@ -71,10 +71,11 @@ Full configuration with all options:
 
 ```yaml
 channels:
-  proluofireIm:
+  proluofire-im:
     enabled: true
     name: "My Proluofire Account"
     serverUrl: https://your-proluofire-server.com
+    wsUrl: wss://your-proluofire-server.com/ws
     apiKey: YOUR_API_KEY
 
     # DM (Direct Message) Policy
@@ -100,8 +101,6 @@ channels:
       - @admin
       - @moderator
 
-    # Media settings
-    mediaMaxMb: 50  # Maximum file size in MB
 ```
 
 ### Multi-Account Configuration
@@ -110,7 +109,7 @@ Connect multiple Proluofire IM accounts:
 
 ```yaml
 channels:
-  proluofireIm:
+  proluofire-im:
     accounts:
       personal:
         enabled: true
@@ -212,22 +211,18 @@ groupPolicy: open
 Send a message to a user:
 
 ```bash
-openclaw message send proluofire-im @username "Hello from OpenClaw!"
+openclaw message send --channel proluofire-im --target 42 --message "Hello from OpenClaw!"
 ```
 
-Send a message to a group:
+Send another message to a room:
 
 ```bash
-openclaw message send proluofire-im "#general" "Hello everyone!"
+openclaw message send --channel proluofire-im --target 99 --message "Hello everyone!"
 ```
 
-### Sending Media
+### Media Support
 
-Send a message with an image:
-
-```bash
-openclaw message send proluofire-im @username "Check this out!" --attach image.png
-```
+Media sending is not supported yet. Only text messages are delivered.
 
 ### Managing Allowlists
 
@@ -267,13 +262,12 @@ openclaw channels status proluofire-im --deep
 
 Proluofire IM supports these target formats:
 
-- **Users**: `@username` or `user:username`
-- **Groups**: `#groupname` or `group:groupname`
+- **Rooms**: `42` or `#42`
 
 You can optionally prefix with `proluofire-im:` for clarity:
 
 ```bash
-openclaw message send proluofire-im:@username "Hello!"
+openclaw message send --channel proluofire-im --target proluofire-im:group:42 --message "Hello!"
 ```
 
 ## Troubleshooting
@@ -303,8 +297,8 @@ openclaw message send proluofire-im:@username "Hello!"
 **Problem**: Messages fail to send
 
 **Solutions**:
-1. Check target format is correct (`@user` or `#group`)
-2. Verify user/group exists in Proluofire IM
+1. Check target format is correct (`42` or `#42`)
+2. Verify room ID exists in Proluofire IM
 3. Check rate limits haven't been exceeded
 4. Review error messages in logs
 
@@ -320,13 +314,7 @@ openclaw message send proluofire-im:@username "Hello!"
 
 ### Media Upload Failures
 
-**Problem**: Cannot upload media files
-
-**Solutions**:
-1. Check file size is under `mediaMaxMb` limit (default 50MB)
-2. Verify file type is supported
-3. Ensure sufficient disk space for temporary files
-4. Check server-side media upload limits
+Media uploads are not supported yet.
 
 ## Implementation Notes
 

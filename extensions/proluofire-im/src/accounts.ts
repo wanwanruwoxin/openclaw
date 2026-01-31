@@ -6,7 +6,7 @@ import { validateAuthConfig } from "./config-schema.js";
  * List all configured proluofire-im account IDs
  */
 export function listProluofireImAccountIds(cfg: CoreConfig): string[] {
-  const channelConfig = cfg.channels?.proluofireIm;
+  const channelConfig = cfg.channels?.["proluofire-im"];
   if (!channelConfig) return [];
 
   const ids: string[] = [];
@@ -28,7 +28,7 @@ export function listProluofireImAccountIds(cfg: CoreConfig): string[] {
  * Resolve the default proluofire-im account ID
  */
 export function resolveDefaultProluofireImAccountId(cfg: CoreConfig): string {
-  const channelConfig = cfg.channels?.proluofireIm;
+  const channelConfig = cfg.channels?.["proluofire-im"];
   if (!channelConfig) return DEFAULT_ACCOUNT_ID;
 
   // If top-level config exists, use default account
@@ -47,6 +47,19 @@ export function resolveDefaultProluofireImAccountId(cfg: CoreConfig): string {
   return DEFAULT_ACCOUNT_ID;
 }
 
+function mergeProluofireImAccountConfig(
+  cfg: CoreConfig,
+  accountId: string,
+): ProluofireImChannelConfig {
+  const channelConfig = cfg.channels?.["proluofire-im"] ?? {};
+  if (accountId === DEFAULT_ACCOUNT_ID) {
+    return channelConfig;
+  }
+  const { accounts: _ignored, ...base } = channelConfig;
+  const account = channelConfig.accounts?.[accountId] ?? {};
+  return { ...base, ...account };
+}
+
 /**
  * Resolve a specific proluofire-im account configuration
  */
@@ -56,7 +69,7 @@ export function resolveProluofireImAccount(params: {
 }): ResolvedProluofireImAccount {
   const { cfg, accountId: rawAccountId } = params;
   const accountId = rawAccountId ?? DEFAULT_ACCOUNT_ID;
-  const channelConfig = cfg.channels?.proluofireIm;
+  const channelConfig = cfg.channels?.["proluofire-im"];
 
   if (!channelConfig) {
     return {
@@ -65,34 +78,27 @@ export function resolveProluofireImAccount(params: {
       enabled: false,
       configured: false,
       serverUrl: "",
+      wsUrl: "",
+      config: {},
+    };
+  }
+  if (accountId !== DEFAULT_ACCOUNT_ID && !channelConfig.accounts?.[accountId]) {
+    return {
+      accountId,
+      name: null,
+      enabled: false,
+      configured: false,
+      serverUrl: "",
+      wsUrl: "",
       config: {},
     };
   }
 
-  // Resolve account-specific config
-  let accountConfig: ProluofireImChannelConfig;
-  let accountName: string | null = null;
-
-  if (accountId === DEFAULT_ACCOUNT_ID) {
-    // Use top-level config for default account
-    accountConfig = channelConfig;
-    accountName = channelConfig.name ?? null;
-  } else {
-    // Use named account config
-    const namedAccount = channelConfig.accounts?.[accountId];
-    if (!namedAccount) {
-      return {
-        accountId,
-        name: null,
-        enabled: false,
-        configured: false,
-        serverUrl: "",
-        config: {},
-      };
-    }
-    accountConfig = namedAccount;
-    accountName = namedAccount.name ?? null;
-  }
+  const accountConfig = mergeProluofireImAccountConfig(cfg, accountId);
+  const accountName = accountConfig.name ?? null;
+  const baseEnabled = channelConfig.enabled !== false;
+  const accountEnabled = accountConfig.enabled !== false;
+  const enabled = baseEnabled && accountEnabled;
 
   // Check if account is configured
   const configured = isAccountConfigured(accountConfig);
@@ -100,9 +106,10 @@ export function resolveProluofireImAccount(params: {
   return {
     accountId,
     name: accountName,
-    enabled: accountConfig.enabled ?? false,
+    enabled,
     configured,
     serverUrl: accountConfig.serverUrl ?? "",
+    wsUrl: accountConfig.wsUrl,
     apiKey: accountConfig.apiKey,
     username: accountConfig.username,
     password: accountConfig.password,

@@ -4,10 +4,13 @@ import {
   DEFAULT_ACCOUNT_ID,
   deleteAccountFromConfigSection,
   formatPairingApproveHint,
+  migrateBaseNameToDefaultAccount,
   normalizeAccountId,
   PAIRING_APPROVED_MESSAGE,
   setAccountEnabledInConfigSection,
+  type ChannelSetupInput,
   type ChannelPlugin,
+  type OpenClawConfig,
 } from "openclaw/plugin-sdk";
 
 import { ProluofireImConfigSchema } from "./config-schema.js";
@@ -18,7 +21,14 @@ import {
   resolveProluofireImAccount,
 } from "./accounts.js";
 import { sendMessageProluofireIm } from "./send.js";
-import { normalizeTarget, validateTarget } from "./protocol.js";
+import {
+  formatProluofireImGroupEntry,
+  formatProluofireImUserEntry,
+  normalizeProluofireImAllowEntry,
+  normalizeProluofireImGroupId,
+  normalizeProluofireImUserId,
+  normalizeTarget,
+} from "./protocol.js";
 import { proluofireImOutbound } from "./outbound.js";
 import { proluofireImMessageActions } from "./actions.js";
 
@@ -33,43 +43,65 @@ const meta = {
   quickstartAllowFrom: true,
 };
 
-/**
- * Normalize messaging target for proluofire-im
- */
-function normalizeProluofireImMessagingTarget(raw: string): string | undefined {
-  let normalized = raw.trim();
-  if (!normalized) return undefined;
-
-  const lowered = normalized.toLowerCase();
-  if (lowered.startsWith("proluofire-im:")) {
-    normalized = normalized.slice("proluofire-im:".length).trim();
-  }
-
-  return normalized || undefined;
-}
+type ProluofireImSetupInput = ChannelSetupInput & {
+  serverUrl?: string;
+  apiKey?: string;
+  username?: string;
+  password?: string;
+  mediaMaxMb?: number;
+};
 
 /**
  * Build config update for proluofire-im
  */
 function buildProluofireImConfigUpdate(
   cfg: CoreConfig,
+  accountId: string,
   input: {
     serverUrl?: string;
+    webhookPath?: string;
     apiKey?: string;
     username?: string;
     password?: string;
     mediaMaxMb?: number;
   },
 ): CoreConfig {
-  const existing = cfg.channels?.proluofireIm ?? {};
+  const existing = cfg.channels?.["proluofire-im"] ?? {};
+  if (accountId !== DEFAULT_ACCOUNT_ID) {
+    const nextAccounts = {
+      ...(existing.accounts ?? {}),
+      [accountId]: {
+        ...(existing.accounts?.[accountId] ?? {}),
+        enabled: true,
+        ...(input.serverUrl ? { serverUrl: input.serverUrl } : {}),
+        ...(input.webhookPath ? { webhookPath: input.webhookPath } : {}),
+        ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+        ...(input.username ? { username: input.username } : {}),
+        ...(input.password ? { password: input.password } : {}),
+        ...(typeof input.mediaMaxMb === "number" ? { mediaMaxMb: input.mediaMaxMb } : {}),
+      },
+    };
+    return {
+      ...cfg,
+      channels: {
+        ...cfg.channels,
+        "proluofire-im": {
+          ...existing,
+          enabled: true,
+          accounts: nextAccounts,
+        },
+      },
+    };
+  }
   return {
     ...cfg,
     channels: {
       ...cfg.channels,
-      proluofireIm: {
+      "proluofire-im": {
         ...existing,
         enabled: true,
         ...(input.serverUrl ? { serverUrl: input.serverUrl } : {}),
+        ...(input.webhookPath ? { webhookPath: input.webhookPath } : {}),
         ...(input.apiKey ? { apiKey: input.apiKey } : {}),
         ...(input.username ? { username: input.username } : {}),
         ...(input.password ? { password: input.password } : {}),
@@ -84,19 +116,24 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
   meta,
   pairing: {
     idLabel: "proluofireImUserId",
-    normalizeAllowEntry: (entry) => entry.replace(/^proluofire-im:/i, "").trim(),
-    notifyApproval: async ({ id }) => {
-      await sendMessageProluofireIm(id, PAIRING_APPROVED_MESSAGE);
+    normalizeAllowEntry: (entry) => normalizeProluofireImAllowEntry(entry),
+    notifyApproval: async ({ id, cfg }) => {
+      const target = formatProluofireImUserEntry(String(id));
+      if (!target) return;
+      await sendMessageProluofireIm(target, PAIRING_APPROVED_MESSAGE, {
+        cfg: cfg as CoreConfig,
+        accountId: DEFAULT_ACCOUNT_ID,
+      });
     },
   },
   capabilities: {
     chatTypes: ["direct", "group"],
     polls: false,
     reactions: false,
-    threads: true,
-    media: true,
+    threads: false,
+    media: false,
   },
-  reload: { configPrefixes: ["channels.proluofireIm"] },
+  reload: { configPrefixes: ["channels.proluofire-im"] },
   configSchema: buildChannelConfigSchema(ProluofireImConfigSchema),
   config: {
     listAccountIds: (cfg) => listProluofireImAccountIds(cfg as CoreConfig),
@@ -106,7 +143,7 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
     setAccountEnabled: ({ cfg, accountId, enabled }) =>
       setAccountEnabledInConfigSection({
         cfg: cfg as CoreConfig,
-        sectionKey: "proluofireIm",
+        sectionKey: "proluofire-im",
         accountId,
         enabled,
         allowTopLevel: true,
@@ -114,9 +151,18 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
     deleteAccount: ({ cfg, accountId }) =>
       deleteAccountFromConfigSection({
         cfg: cfg as CoreConfig,
-        sectionKey: "proluofireIm",
+        sectionKey: "proluofire-im",
         accountId,
-        clearBaseFields: ["name", "serverUrl", "apiKey", "username", "password", "mediaMaxMb"],
+        clearBaseFields: [
+          "name",
+          "serverUrl",
+          "wsUrl",
+          "webhookPath",
+          "apiKey",
+          "username",
+          "password",
+          "mediaMaxMb",
+        ],
       }),
     isConfigured: (account) => account.configured,
     describeAccount: (account) => ({
@@ -126,36 +172,56 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
       configured: account.configured,
       baseUrl: account.serverUrl,
     }),
-    resolveAllowFrom: ({ cfg }) =>
-      ((cfg as CoreConfig).channels?.proluofireIm?.dm?.allowFrom ?? []).map((entry) =>
-        String(entry),
-      ),
+    resolveAllowFrom: ({ cfg, accountId }) =>
+      (resolveProluofireImAccount({
+        cfg: cfg as CoreConfig,
+        accountId: accountId ?? DEFAULT_ACCOUNT_ID,
+      }).config.dm?.allowFrom ?? []).map((entry) => String(entry)),
     formatAllowFrom: ({ allowFrom }) =>
-      allowFrom.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean),
+      allowFrom.map((entry) => formatProluofireImUserEntry(String(entry))).filter(Boolean),
   },
   security: {
-    resolveDmPolicy: ({ account }) => ({
-      policy: account.config.dm?.policy ?? "pairing",
-      allowFrom: account.config.dm?.allowFrom ?? [],
-      policyPath: "channels.proluofireIm.dm.policy",
-      allowFromPath: "channels.proluofireIm.dm.allowFrom",
-      approveHint: formatPairingApproveHint("proluofire-im"),
-      normalizeEntry: (raw) => raw.replace(/^proluofire-im:/i, "").trim().toLowerCase(),
-    }),
+    resolveDmPolicy: ({ account, cfg, accountId }) => {
+      const resolvedAccountId = accountId ?? account.accountId ?? DEFAULT_ACCOUNT_ID;
+      const useAccountPath = Boolean(
+        (cfg as CoreConfig).channels?.["proluofire-im"]?.accounts?.[resolvedAccountId],
+      );
+      const basePath = useAccountPath
+        ? `channels.proluofire-im.accounts.${resolvedAccountId}.`
+        : "channels.proluofire-im.";
+      return {
+        policy: account.config.dm?.policy ?? "pairing",
+        allowFrom: account.config.dm?.allowFrom ?? [],
+        policyPath: `${basePath}dm.policy`,
+        allowFromPath: `${basePath}dm.allowFrom`,
+        approveHint: formatPairingApproveHint("proluofire-im"),
+        normalizeEntry: (raw) => normalizeProluofireImAllowEntry(raw),
+      };
+    },
     collectWarnings: ({ account, cfg }) => {
       const coreConfig = cfg as CoreConfig;
-      const defaultGroupPolicy = (coreConfig.channels as any)?.defaults?.groupPolicy;
+      const defaultGroupPolicy = (coreConfig.channels as OpenClawConfig["channels"])?.defaults?.groupPolicy;
       const groupPolicy = account.config.groupPolicy ?? defaultGroupPolicy ?? "allowlist";
       if (groupPolicy !== "open") return [];
       return [
-        "- Proluofire IM groups: groupPolicy=\"open\" allows any group to trigger. Set channels.proluofireIm.groupPolicy=\"allowlist\" + channels.proluofireIm.groups to restrict groups.",
+        "- Proluofire IM groups: groupPolicy=\"open\" allows any group to trigger. Set channels.proluofire-im.groupPolicy=\"allowlist\" + channels.proluofire-im.groups to restrict groups.",
       ];
     },
   },
   groups: {
-    resolveRequireMention: ({ cfg }) => {
-      const groupPolicy = (cfg as CoreConfig).channels?.proluofireIm?.groupPolicy ?? "allowlist";
-      return groupPolicy === "open";
+    resolveRequireMention: ({ cfg, groupId }) => {
+      const channelConfig = (cfg as CoreConfig).channels?.["proluofire-im"];
+      const groups = channelConfig?.groups ?? {};
+      const normalizedId = groupId ? normalizeProluofireImGroupId(groupId) : "";
+      const entry = normalizedId
+        ? Object.entries(groups).find(
+            ([key]) => normalizeProluofireImGroupId(key) === normalizedId,
+          )?.[1]
+        : undefined;
+      const wildcard = groups["*"];
+      if (typeof entry?.requireMention === "boolean") return entry.requireMention;
+      if (typeof wildcard?.requireMention === "boolean") return wildcard.requireMention;
+      return true;
     },
     resolveToolPolicy: () => {
       // TODO: Implement group tool policy based on proluofire-im configuration
@@ -164,17 +230,17 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
     },
   },
   messaging: {
-    normalizeTarget: normalizeProluofireImMessagingTarget,
+    normalizeTarget: (raw) => normalizeTarget(raw) || undefined,
     targetResolver: {
       looksLikeId: (raw) => {
         const trimmed = raw.trim();
         if (!trimmed) return false;
-        // Check if it looks like a proluofire-im identifier
-        // TODO: Customize based on actual proluofire-im identifier format
-        if (/^(proluofire-im:)?[@#]/i.test(trimmed)) return true;
-        return trimmed.includes("@") || trimmed.includes("#");
+        if (/^proluofire-im:/i.test(trimmed)) return true;
+        if (trimmed.startsWith("@") || trimmed.startsWith("#")) return true;
+        if (/^\d+$/.test(trimmed)) return true;
+        return false;
       },
-      hint: "<user|group>",
+      hint: "<roomId>",
     },
   },
   directory: {
@@ -182,59 +248,56 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
     listPeers: async ({ cfg, accountId, query, limit }) => {
       const account = resolveProluofireImAccount({
         cfg: cfg as CoreConfig,
-        accountId: accountId ?? DEFAULT_ACCOUNT_ID
+        accountId: accountId ?? DEFAULT_ACCOUNT_ID,
       });
       const q = query?.trim().toLowerCase() || "";
       const ids = new Set<string>();
 
       // Collect user IDs from allowFrom lists
       for (const entry of account.config.dm?.allowFrom ?? []) {
-        const raw = String(entry).trim();
-        if (!raw || raw === "*") continue;
-        ids.add(raw.replace(/^proluofire-im:/i, ""));
+        const normalized = normalizeProluofireImUserId(String(entry));
+        if (!normalized || normalized === "*") continue;
+        ids.add(normalized);
       }
 
       for (const entry of account.config.groupAllowFrom ?? []) {
-        const raw = String(entry).trim();
-        if (!raw || raw === "*") continue;
-        ids.add(raw.replace(/^proluofire-im:/i, ""));
+        const normalized = normalizeProluofireImUserId(String(entry));
+        if (!normalized || normalized === "*") continue;
+        ids.add(normalized);
       }
 
       // Collect users from group configurations
       const groups = account.config.groups ?? {};
       for (const group of Object.values(groups)) {
         for (const entry of group.users ?? []) {
-          const raw = String(entry).trim();
-          if (!raw || raw === "*") continue;
-          ids.add(raw.replace(/^proluofire-im:/i, ""));
+          const normalized = normalizeProluofireImUserId(String(entry));
+          if (!normalized || normalized === "*") continue;
+          ids.add(normalized);
         }
       }
 
       return Array.from(ids)
-        .map((raw) => raw.trim())
         .filter(Boolean)
         .filter((id) => (q ? id.toLowerCase().includes(q) : true))
         .slice(0, limit && limit > 0 ? limit : undefined)
         .map((id) => ({
           kind: "user" as const,
-          id,
+          id: formatProluofireImUserEntry(id),
         }));
     },
     listGroups: async ({ cfg, accountId, query, limit }) => {
       const account = resolveProluofireImAccount({
         cfg: cfg as CoreConfig,
-        accountId: accountId ?? DEFAULT_ACCOUNT_ID
+        accountId: accountId ?? DEFAULT_ACCOUNT_ID,
       });
       const q = query?.trim().toLowerCase() || "";
       const groups = account.config.groups ?? {};
-      const ids = Object.keys(groups)
-        .map((raw) => raw.trim())
-        .filter((raw) => Boolean(raw) && raw !== "*")
-        .map((raw) => raw.replace(/^proluofire-im:/i, ""))
+      return Object.keys(groups)
+        .map((raw) => normalizeProluofireImGroupId(raw))
+        .filter((id) => Boolean(id) && id !== "*")
         .filter((id) => (q ? id.toLowerCase().includes(q) : true))
         .slice(0, limit && limit > 0 ? limit : undefined)
-        .map((id) => ({ kind: "group" as const, id }));
-      return ids;
+        .map((id) => ({ kind: "group" as const, id: formatProluofireImGroupEntry(id) }));
     },
   },
   setup: {
@@ -242,12 +305,15 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
     applyAccountName: ({ cfg, accountId, name }) =>
       applyAccountNameToChannelSection({
         cfg: cfg as CoreConfig,
-        channelKey: "proluofireIm",
+        channelKey: "proluofire-im",
         accountId,
         name,
       }),
-    validateInput: ({ input }) => {
-      const setupInput = input as any;
+    validateInput: ({ input, accountId }) => {
+      const setupInput = input as ProluofireImSetupInput;
+      if (setupInput.useEnv && accountId !== DEFAULT_ACCOUNT_ID) {
+        return "Environment-based auth can only be used for the default account.";
+      }
       if (setupInput.useEnv) return null;
       if (!setupInput.serverUrl?.trim()) return "Proluofire IM requires --server-url";
 
@@ -269,30 +335,38 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
 
       return null;
     },
-    applyAccountConfig: ({ cfg, input }) => {
-      const setupInput = input as any;
+    applyAccountConfig: ({ cfg, input, accountId }) => {
+      const setupInput = input as ProluofireImSetupInput;
       const namedConfig = applyAccountNameToChannelSection({
         cfg: cfg as CoreConfig,
-        channelKey: "proluofireIm",
-        accountId: DEFAULT_ACCOUNT_ID,
+        channelKey: "proluofire-im",
+        accountId,
         name: setupInput.name,
       });
+      const next =
+        accountId !== DEFAULT_ACCOUNT_ID
+          ? migrateBaseNameToDefaultAccount({
+              cfg: namedConfig,
+              channelKey: "proluofire-im",
+            })
+          : namedConfig;
 
       if (setupInput.useEnv) {
         return {
-          ...namedConfig,
+          ...next,
           channels: {
-            ...namedConfig.channels,
-            proluofireIm: {
-              ...(namedConfig.channels?.proluofireIm ?? {}),
+            ...next.channels,
+            "proluofire-im": {
+              ...(next.channels?.["proluofire-im"] ?? {}),
               enabled: true,
             },
           },
         } as CoreConfig;
       }
 
-      return buildProluofireImConfigUpdate(namedConfig as CoreConfig, {
+      return buildProluofireImConfigUpdate(next as CoreConfig, accountId, {
         serverUrl: setupInput.serverUrl?.trim(),
+        webhookPath: setupInput.webhookPath?.trim(),
         apiKey: setupInput.apiKey?.trim(),
         username: setupInput.username?.trim(),
         password: setupInput.password?.trim(),
@@ -336,6 +410,7 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
       try {
         return await probeProluofireImFromConfig({
           cfg: cfg as CoreConfig,
+          accountId: account.accountId,
           timeoutMs,
         });
       } catch (err) {
@@ -382,6 +457,7 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
         // Create client
         const client = await createProluofireImClient({
           serverUrl: account.serverUrl,
+          wsUrl: account.wsUrl,
           apiKey: account.apiKey,
           username: account.username,
           password: account.password,
@@ -398,7 +474,14 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
           client,
           accountId: account.accountId,
           config: ctx.cfg as CoreConfig,
+          runtime: ctx.runtime,
           abortSignal: ctx.abortSignal,
+          statusSink: (patch) => {
+            ctx.setStatus({
+              ...ctx.getStatus(),
+              ...patch,
+            });
+          },
         });
 
         // Disconnect on shutdown

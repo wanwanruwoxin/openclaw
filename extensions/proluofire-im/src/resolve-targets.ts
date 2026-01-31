@@ -90,7 +90,7 @@ export async function resolveUserTarget(params: {
     // const userInfo = await client.getUserInfo(resolved.id);
     // return { id: resolved.id, name: userInfo.name };
 
-    return { id: resolved.id };
+    return { id: resolved.normalized };
   } catch (error) {
     return {
       id: input,
@@ -123,7 +123,7 @@ export async function resolveGroupTarget(params: {
     // const groupInfo = await client.getGroupInfo(resolved.id);
     // return { id: resolved.id, name: groupInfo.name };
 
-    return { id: resolved.id };
+    return { id: resolved.normalized };
   } catch (error) {
     return {
       id: input,
@@ -144,7 +144,8 @@ export async function searchUsers(params: {
 }): Promise<Array<{ id: string; name: string }>> {
   const { query, limit = 10 } = params;
 
-  console.log(`[proluofire-im] Searching users: ${query} (not implemented)`);
+  void query;
+  void limit;
 
   // TODO: Implement actual user search
   // const results = await client.searchUsers(query, limit);
@@ -165,7 +166,8 @@ export async function searchGroups(params: {
 }): Promise<Array<{ id: string; name: string }>> {
   const { query, limit = 10 } = params;
 
-  console.log(`[proluofire-im] Searching groups: ${query} (not implemented)`);
+  void query;
+  void limit;
 
   // TODO: Implement actual group search
   // const results = await client.searchGroups(query, limit);

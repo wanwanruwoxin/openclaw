@@ -9,6 +9,14 @@ const urlSchema = z
     "URL must start with http:// or https://",
   );
 
+const wsUrlSchema = z
+  .string()
+  .url("Must be a valid URL")
+  .refine(
+    (url) => url.startsWith("ws://") || url.startsWith("wss://"),
+    "URL must start with ws:// or wss://",
+  );
+
 // DM policy schema
 const dmPolicySchema = z.object({
   policy: z.enum(["pairing", "allowlist", "open"]).optional(),
@@ -18,6 +26,7 @@ const dmPolicySchema = z.object({
 // Group configuration schema
 const groupConfigSchema = z.object({
   users: z.array(z.string()).optional(),
+  requireMention: z.boolean().optional(),
 });
 
 // Media configuration schema
@@ -32,11 +41,13 @@ const baseAccountConfigSchema = z.object({
   enabled: z.boolean().optional(),
   name: z.string().optional(),
   serverUrl: urlSchema.optional(),
+  wsUrl: wsUrlSchema.optional(),
+  webhookPath: z.string().optional(),
   apiKey: z.string().optional(),
   username: z.string().optional(),
   password: z.string().optional(),
   dm: dmPolicySchema.optional(),
-  groupPolicy: z.enum(["allowlist", "open"]).optional(),
+  groupPolicy: z.enum(["allowlist", "open", "disabled"]).optional(),
   groups: z.record(z.string(), groupConfigSchema).optional(),
   groupAllowFrom: z.array(z.string()).optional(),
   mediaMaxMb: mediaMaxMbSchema,

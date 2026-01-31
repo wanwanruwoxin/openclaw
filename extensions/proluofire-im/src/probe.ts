@@ -1,5 +1,5 @@
 import type { CoreConfig } from "./types.js";
-import { resolveProluofireImAuth } from "./client.js";
+import { createProluofireImClient, resolveProluofireImAuth } from "./client.js";
 
 /**
  * Probe proluofire-im connection health
@@ -12,6 +12,7 @@ import { resolveProluofireImAuth } from "./client.js";
  */
 export async function probeProluofireIm(params: {
   serverUrl: string;
+  wsUrl?: string;
   apiKey?: string;
   username?: string;
   password?: string;
@@ -21,32 +22,18 @@ export async function probeProluofireIm(params: {
   error?: string;
   elapsedMs: number;
 }> {
-  const { serverUrl, apiKey, username, password, timeoutMs = 5000 } = params;
+  const { serverUrl, wsUrl, apiKey, username, password, timeoutMs = 5000 } = params;
   const startTime = Date.now();
 
   try {
-    console.log(`[proluofire-im] Probing connection to ${serverUrl}...`);
-
-    // TODO: Implement actual probe
-    // Options:
-    // 1. Try to connect and authenticate
-    // 2. Call a health check endpoint (e.g., /health, /ping)
-    // 3. Attempt a simple API call (e.g., get user info)
-    //
-    // Example:
-    // const client = await createProluofireImClient({ serverUrl, apiKey, username, password });
-    // await Promise.race([
-    //   client.connect(),
-    //   new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs))
-    // ]);
-    // await client.disconnect();
-
-    // Stub: simulate probe
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const client = await createProluofireImClient({ serverUrl, wsUrl, apiKey, username, password });
+    await Promise.race([
+      client.connect(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), timeoutMs)),
+    ]);
+    await client.disconnect();
 
     const elapsedMs = Date.now() - startTime;
-
-    console.log(`[proluofire-im] Probe successful (${elapsedMs}ms)`);
 
     return {
       ok: true,
@@ -55,8 +42,6 @@ export async function probeProluofireIm(params: {
   } catch (error) {
     const elapsedMs = Date.now() - startTime;
     const errorMsg = error instanceof Error ? error.message : String(error);
-
-    console.error(`[proluofire-im] Probe failed (${elapsedMs}ms):`, errorMsg);
 
     return {
       ok: false,
@@ -71,6 +56,7 @@ export async function probeProluofireIm(params: {
  */
 export async function probeProluofireImFromConfig(params: {
   cfg: CoreConfig;
+  accountId?: string;
   timeoutMs?: number;
 }): Promise<{
   ok: boolean;
@@ -78,9 +64,13 @@ export async function probeProluofireImFromConfig(params: {
   elapsedMs: number;
 }> {
   try {
-    const auth = await resolveProluofireImAuth({ cfg: params.cfg });
+    const auth = await resolveProluofireImAuth({
+      cfg: params.cfg,
+      accountId: params.accountId,
+    });
     return await probeProluofireIm({
       serverUrl: auth.serverUrl,
+      wsUrl: auth.wsUrl,
       apiKey: auth.apiKey,
       username: auth.username,
       password: auth.password,
