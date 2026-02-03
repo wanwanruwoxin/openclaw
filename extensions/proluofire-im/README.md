@@ -175,6 +175,61 @@ channels:
     mediaMaxMb: 50
 ```
 
+## CLI 配置命令（serverUrl / wsUrl / token）
+
+> 注意：`proluofire-im` 含短横线，使用 `channels["proluofire-im"]` 这种路径写法。
+
+设置 API 地址 + WebSocket 地址 + Token（Bearer）：
+
+```bash
+openclaw config set 'channels["proluofire-im"].serverUrl' 'https://proluofire.example.com'
+openclaw config set 'channels["proluofire-im"].wsUrl' 'wss://proluofire.example.com/ws'
+openclaw config set 'channels["proluofire-im"].apiKey' 'YOUR_BEARER_TOKEN'
+```
+
+可选：如果后端不提供独立 `wsUrl`，可以只配置 `serverUrl` + `apiKey`，WebSocket 会自动拼成 `wss://.../ws?token=...`。
+
+多账号示例（accountId=work）：
+
+```bash
+openclaw config set 'channels["proluofire-im"].accounts.work.serverUrl' 'https://proluofire.example.com'
+openclaw config set 'channels["proluofire-im"].accounts.work.wsUrl' 'wss://proluofire.example.com/ws'
+openclaw config set 'channels["proluofire-im"].accounts.work.apiKey' 'YOUR_BEARER_TOKEN'
+```
+
+修改配置后需要重启 gateway 才会生效。
+
+## CLI 发送消息
+
+目标格式：
+- `--target <roomId>`: 数字房间 ID（默认按群组/房间发送）
+- `--target @user_id`: 用户私聊
+- `--target #room_id`: 群组/房间
+
+发送文本消息：
+
+```bash
+openclaw message send --channel proluofire-im --target 42 --message "Hello from OpenClaw"
+```
+
+发送私聊：
+
+```bash
+openclaw message send --channel proluofire-im --target @user123 --message "Hi"
+```
+
+回复某条消息（reply id）：
+
+```bash
+openclaw message send --channel proluofire-im --target 12345 --message "Got it" --reply-to 67890
+```
+
+多账号发送（accountId=work）：
+
+```bash
+openclaw message send --channel proluofire-im --account work --target 12345 --message "Hello"
+```
+
 ## Next Steps
 
 1. **Gather Proluofire IM Details**
