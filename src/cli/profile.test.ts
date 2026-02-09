@@ -12,21 +12,27 @@ describe("parseCliProfileArgs", () => {
       "--dev",
       "--allow-unconfigured",
     ]);
-    if (!res.ok) throw new Error(res.error);
+    if (!res.ok) {
+      throw new Error(res.error);
+    }
     expect(res.profile).toBeNull();
     expect(res.argv).toEqual(["node", "openclaw", "gateway", "--dev", "--allow-unconfigured"]);
   });
 
   it("still accepts global --dev before subcommand", () => {
     const res = parseCliProfileArgs(["node", "openclaw", "--dev", "gateway"]);
-    if (!res.ok) throw new Error(res.error);
+    if (!res.ok) {
+      throw new Error(res.error);
+    }
     expect(res.profile).toBe("dev");
     expect(res.argv).toEqual(["node", "openclaw", "gateway"]);
   });
 
   it("parses --profile value and strips it", () => {
     const res = parseCliProfileArgs(["node", "openclaw", "--profile", "work", "status"]);
-    if (!res.ok) throw new Error(res.error);
+    if (!res.ok) {
+      throw new Error(res.error);
+    }
     expect(res.profile).toBe("work");
     expect(res.argv).toEqual(["node", "openclaw", "status"]);
   });
@@ -75,6 +81,23 @@ describe("applyCliProfileEnv", () => {
     expect(env.OPENCLAW_STATE_DIR).toBe("/custom");
     expect(env.OPENCLAW_GATEWAY_PORT).toBe("19099");
     expect(env.OPENCLAW_CONFIG_PATH).toBe(path.join("/custom", "openclaw.json"));
+  });
+
+  it("uses OPENCLAW_HOME when deriving profile state dir", () => {
+    const env: Record<string, string | undefined> = {
+      OPENCLAW_HOME: "/srv/openclaw-home",
+      HOME: "/home/other",
+    };
+    applyCliProfileEnv({
+      profile: "work",
+      env,
+      homedir: () => "/home/fallback",
+    });
+
+    expect(env.OPENCLAW_STATE_DIR).toBe(path.join("/srv/openclaw-home", ".openclaw-work"));
+    expect(env.OPENCLAW_CONFIG_PATH).toBe(
+      path.join("/srv/openclaw-home", ".openclaw-work", "openclaw.json"),
+    );
   });
 });
 
