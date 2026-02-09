@@ -11,10 +11,9 @@
     "moduleResolution": "NodeNext",
     "outDir": "dist",
     "rootDir": "src",
-    "declarationMap": true
+    "declarationMap": true,
     "noEmit": true,
     "noEmitOnError": true,
-    "outDir": "dist",
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "strict": true,
