@@ -540,7 +540,11 @@ async function handleIncomingMessage(params: {
     commandAuthorized,
   });
   if (isGroup && mentionGate.shouldSkip) {
-    logVerbose(core, runtime, `drop group ${toTarget} (no mention)`);
+    logVerbose(
+      core,
+      runtime,
+      `drop group ${toTarget} (no mention) - rawBody: ${JSON.stringify(rawBody)}, mentionRegexes: ${mentionRegexes}`,
+    );
     return;
   }
 

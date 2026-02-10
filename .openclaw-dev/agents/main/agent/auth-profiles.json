@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "profiles": {
+    "zai:default": {
+      "type": "api_key",
+      "provider": "zai",
+      "key": "cde8353e362543cea05f170d5a470c86.nRpmVTtQNXR54Kud"
+    }
+  },
+  "lastGood": {
+    "zai": "zai:default"
+  },
+  "usageStats": {
+    "zai:default": {
+      "lastUsed": 1770684157181,
+      "errorCount": 0
+    }
+  }
+}
