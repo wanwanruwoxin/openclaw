@@ -26,12 +26,34 @@ export async function probeProluofireIm(params: {
   const startTime = Date.now();
 
   try {
-    const client = await createProluofireImClient({ serverUrl, wsUrl, apiKey, username, password });
-    await Promise.race([
-      client.connect(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), timeoutMs)),
-    ]);
-    await client.disconnect();
+    // Avoid connecting to WS during probe as it conflicts with the main connection
+    // (Server kicks older connection if same token is used)
+    // Instead, we just check if the server is reachable via HTTP
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      await fetch(serverUrl, {
+        method: "HEAD",
+        signal: controller.signal,
+      }).catch(() => {
+        // Fallback to GET if HEAD fails, or ignore error if it's just a protocol error
+        // We mainly want to check network reachability
+        return fetch(serverUrl, {
+          method: "GET",
+          signal: controller.signal,
+        });
+      });
+    } catch (err) {
+      // If it's a network error (ECONNREFUSED etc), rethrow
+      // If it's 404/401/500, it means server is reachable, so we consider it a success for probe
+      const msg = String(err);
+      if (msg.includes("ECONN") || msg.includes("ETIMEDOUT") || msg.includes("Timeout")) {
+        throw err;
+      }
+    } finally {
+      clearTimeout(id);
+    }
 
     const elapsedMs = Date.now() - startTime;
 

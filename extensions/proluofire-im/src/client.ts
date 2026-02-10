@@ -249,6 +249,10 @@ export async function createProluofireImClient(params: {
 
       const startHeartbeat = () => {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
+        // Send initial ping immediately
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send("ping");
+        }
         heartbeatTimer = setInterval(() => {
           if (ws?.readyState === WebSocket.OPEN) {
             ws.send("ping");
