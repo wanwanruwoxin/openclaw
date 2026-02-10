@@ -76,6 +76,7 @@ export interface ProluofireImMessage {
   to: string;
   content: string;
   timestamp: number;
+  roomId?: string;
   threadId?: string;
   replyToId?: string;
   attachments?: ProluofireImAttachment[];

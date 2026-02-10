@@ -121,6 +121,12 @@ export async function handleWebhookRequest(params: {
           : typeof messageData.replyTo === "string"
             ? messageData.replyTo
             : undefined;
+      const roomId =
+        typeof messageData.roomId === "string" || typeof messageData.roomId === "number"
+          ? String(messageData.roomId)
+          : typeof messageData.room_id === "string" || typeof messageData.room_id === "number"
+            ? String(messageData.room_id)
+            : undefined;
       const content =
         typeof messageData.content === "string"
           ? messageData.content
@@ -136,6 +142,7 @@ export async function handleWebhookRequest(params: {
         to,
         content,
         timestamp: Number.isFinite(rawTimestamp ?? NaN) ? Number(rawTimestamp) : Date.now(),
+        roomId,
         threadId,
         replyToId,
         attachments,

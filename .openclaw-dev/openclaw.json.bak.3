@@ -1,7 +1,7 @@
 {
   "meta": {
     "lastTouchedVersion": "2026.2.6-3",
-    "lastTouchedAt": "2026-02-10T00:41:38.670Z"
+    "lastTouchedAt": "2026-02-09T02:33:50.059Z"
   },
   "agents": {
     "defaults": {
@@ -9,19 +9,8 @@
       "maxConcurrent": 4,
       "subagents": {
         "maxConcurrent": 8
-      },
-      "models": {
-        "zai/glm-4.7": {
-          "alias": "GLM"
-        }
-      },
-      "model": {
-        "primary": "zai/glm-4.7"
       }
     }
-  },
-  "messages": {
-    "ackReactionScope": "group-mentions"
   },
   "commands": {
     "native": "auto",
@@ -48,16 +37,11 @@
     }
   },
   "gateway": {
-    "port": 18790,
     "mode": "local",
+    "port": 18790,
     "auth": {
       "mode": "token",
       "token": "123456"
-    },
-    "bind": "loopback",
-    "tailscale": {
-      "mode": "off",
-      "resetOnExit": false
     }
   },
   "plugins": {
@@ -70,18 +54,7 @@
       }
     }
   },
-  "auth": {
-    "profiles": {
-      "zai:default": {
-        "provider": "zai",
-        "mode": "api_key"
-      }
-    }
-  },
-  "wizard": {
-    "lastRunAt": "2026-02-10T00:41:38.667Z",
-    "lastRunVersion": "2026.2.6-3",
-    "lastRunCommand": "onboard",
-    "lastRunMode": "local"
+  "messages": {
+    "ackReactionScope": "group-mentions"
   }
 }

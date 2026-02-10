@@ -101,46 +101,47 @@ export function stripRedundantSubsystemPrefixForConsole(
   message: string,
   displaySubsystem: string,
 ): string {
+  const normalizedMessage = typeof message === "string" ? message : String(message);
   if (!displaySubsystem) {
-    return message;
+    return normalizedMessage;
   }
 
   // Common duplication: "[discord] discord: ..." (when a message manually includes the subsystem tag).
-  if (message.startsWith("[")) {
-    const closeIdx = message.indexOf("]");
+  if (normalizedMessage.startsWith("[")) {
+    const closeIdx = normalizedMessage.indexOf("]");
     if (closeIdx > 1) {
-      const bracketTag = message.slice(1, closeIdx);
+      const bracketTag = normalizedMessage.slice(1, closeIdx);
       if (bracketTag.toLowerCase() === displaySubsystem.toLowerCase()) {
         let i = closeIdx + 1;
-        while (message[i] === " ") {
+        while (normalizedMessage[i] === " ") {
           i += 1;
         }
-        return message.slice(i);
+        return normalizedMessage.slice(i);
       }
     }
   }
 
-  const prefix = message.slice(0, displaySubsystem.length);
+  const prefix = normalizedMessage.slice(0, displaySubsystem.length);
   if (prefix.toLowerCase() !== displaySubsystem.toLowerCase()) {
-    return message;
+    return normalizedMessage;
   }
 
-  const next = message.slice(displaySubsystem.length, displaySubsystem.length + 1);
+  const next = normalizedMessage.slice(displaySubsystem.length, displaySubsystem.length + 1);
   if (next !== ":" && next !== " ") {
-    return message;
+    return normalizedMessage;
   }
 
   let i = displaySubsystem.length;
-  while (message[i] === " ") {
+  while (normalizedMessage[i] === " ") {
     i += 1;
   }
-  if (message[i] === ":") {
+  if (normalizedMessage[i] === ":") {
     i += 1;
   }
-  while (message[i] === " ") {
+  while (normalizedMessage[i] === " ") {
     i += 1;
   }
-  return message.slice(i);
+  return normalizedMessage.slice(i);
 }
 
 function formatConsoleLine(opts: {

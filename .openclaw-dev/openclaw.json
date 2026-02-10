@@ -1,22 +1,36 @@
 {
   "meta": {
     "lastTouchedVersion": "2026.2.6-3",
-    "lastTouchedAt": "2026-02-10T00:41:38.670Z"
+    "lastTouchedAt": "2026-02-10T01:36:08.166Z"
+  },
+  "wizard": {
+    "lastRunAt": "2026-02-10T00:41:38.667Z",
+    "lastRunVersion": "2026.2.6-3",
+    "lastRunCommand": "onboard",
+    "lastRunMode": "local"
+  },
+  "auth": {
+    "profiles": {
+      "zai:default": {
+        "provider": "zai",
+        "mode": "api_key"
+      }
+    }
   },
   "agents": {
     "defaults": {
-      "workspace": "/Users/qiuliang/company/openclaw/workspace",
-      "maxConcurrent": 4,
-      "subagents": {
-        "maxConcurrent": 8
+      "model": {
+        "primary": "zai/glm-4.7"
       },
       "models": {
         "zai/glm-4.7": {
           "alias": "GLM"
         }
       },
-      "model": {
-        "primary": "zai/glm-4.7"
+      "workspace": "/Users/qiuliang/company/openclaw/workspace",
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
       }
     }
   },
@@ -35,8 +49,8 @@
       "wsUrl": "ws://192.168.1.37:2000/ws",
       "apiKey": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4MDIxMzc3MjAsInVpZCI6MTUsInV1aWQiOiI4ZGM5NjUwNi1mNmU3LTRkMjUtYmFiMS0zYjdlMzRkNTU5ZDEiLCJsb2dpbl90eXBlIjoicm9ib3QiLCJmaW5nZXJwcmludCI6InJvYm90X2ZpbmdlcnByaW50IiwiZGV2aWNlX3R5cGUiOiJEZXNrdG9wIiwidGVuYW50X2lkIjoxLCJpc19zdXBlcl9hZG1pbiI6ZmFsc2UsImlzX2FkbWluIjpmYWxzZSwicm9sZXMiOltdfQ.EC-vC7r0tNy3DMMJe1Ap1l97KP1DJ1Vi83rGZy3WR80",
       "dm": {
-        "policy": "pairing",
-        "allowFrom": []
+        "policy": "open",
+        "allowFrom": ["*"]
       },
       "groupPolicy": "allowlist",
       "groups": {
@@ -50,11 +64,11 @@
   "gateway": {
     "port": 18790,
     "mode": "local",
+    "bind": "loopback",
     "auth": {
       "mode": "token",
       "token": "123456"
     },
-    "bind": "loopback",
     "tailscale": {
       "mode": "off",
       "resetOnExit": false
@@ -69,19 +83,5 @@
         "enabled": true
       }
     }
-  },
-  "auth": {
-    "profiles": {
-      "zai:default": {
-        "provider": "zai",
-        "mode": "api_key"
-      }
-    }
-  },
-  "wizard": {
-    "lastRunAt": "2026-02-10T00:41:38.667Z",
-    "lastRunVersion": "2026.2.6-3",
-    "lastRunCommand": "onboard",
-    "lastRunMode": "local"
   }
 }

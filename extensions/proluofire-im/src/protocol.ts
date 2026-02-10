@@ -19,7 +19,8 @@ export function normalizeProluofireImAllowEntry(value: string): string {
   if (lower.startsWith("group:")) {
     return lower.slice("group:".length).trim();
   }
-  const withoutPrefix = trimmed.startsWith("@") || trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+  const withoutPrefix =
+    trimmed.startsWith("@") || trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
   return withoutPrefix.trim().toLowerCase();
 }
 
@@ -252,6 +253,8 @@ export function resolveTarget(target: string): {
  * TODO: Implement target normalization based on proluofire-im requirements
  */
 export function normalizeTarget(target: string): string {
+  if (target === undefined || target === null) return "";
+  if (typeof target !== "string") return ""; // Extra safety check
   const trimmed = stripProluofireImPrefix(target);
   if (!trimmed) return "";
   const lower = trimmed.toLowerCase();
