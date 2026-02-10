@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-
 import {
   DEFAULT_ACCOUNT_ID,
   logInboundDrop,
@@ -8,8 +7,6 @@ import {
   type OpenClawConfig,
   type RuntimeEnv,
 } from "openclaw/plugin-sdk";
-
-import { resolveProluofireImAccount } from "./accounts.js";
 import type {
   CoreConfig,
   ProluofireImAttachment,
@@ -17,6 +14,7 @@ import type {
   ProluofireImMessage,
   ResolvedProluofireImAccount,
 } from "./types.js";
+import { resolveProluofireImAccount } from "./accounts.js";
 import {
   decodeMessage,
   extractMetadata,
@@ -27,13 +25,13 @@ import {
   normalizeProluofireImUserId,
   normalizeTarget,
 } from "./protocol.js";
-import { sendMessageProluofireIm } from "./send.js";
 import {
   getProluofireImRuntime,
   markInboundMessage,
   registerClientForAccount,
   unregisterClientForAccount,
 } from "./runtime.js";
+import { sendMessageProluofireIm } from "./send.js";
 import {
   handleWebhookRequest,
   registerClientForWebhook,
@@ -279,8 +277,7 @@ export async function handleProluofireImWebhookRequest(
     );
   } else if (targets.length > 1) {
     const fallback =
-      targets.find((target) => target.account.accountId === DEFAULT_ACCOUNT_ID) ??
-      targets[0];
+      targets.find((target) => target.account.accountId === DEFAULT_ACCOUNT_ID) ?? targets[0];
     matching = fallback ? [fallback] : [];
   }
 
@@ -358,7 +355,9 @@ export async function monitorProluofireImProvider(params: {
     if (status.connected) {
       logVerbose(core, runtime, `connected account=${accountId}`);
     } else {
-      runtime.error(`[proluofire-im] disconnected account=${accountId}: ${status.error ?? "unknown"}`);
+      runtime.error(
+        `[proluofire-im] disconnected account=${accountId}: ${status.error ?? "unknown"}`,
+      );
     }
   });
 
@@ -386,6 +385,7 @@ async function handleIncomingMessage(params: {
   const decoded = decodeMessage(message);
   const metadata = extractMetadata(message);
   const rawBody = decoded.content ?? "";
+  runtime.log(`[proluofire-im] received rawBody: ${JSON.stringify(rawBody)}`);
   const attachments = message.attachments ?? [];
   if (!rawBody.trim() && attachments.length === 0) return;
 
@@ -403,9 +403,7 @@ async function handleIncomingMessage(params: {
 
   const configAllowFrom = normalizeAllowlist(account.config.dm?.allowFrom);
   const configGroupAllowFrom = normalizeAllowlist(account.config.groupAllowFrom);
-  const storeAllowFrom = await core.channel.pairing
-    .readAllowFromStore(CHANNEL_ID)
-    .catch(() => []);
+  const storeAllowFrom = await core.channel.pairing.readAllowFromStore(CHANNEL_ID).catch(() => []);
   const storeAllowList = normalizeAllowlist(storeAllowFrom);
 
   const effectiveAllowFrom = [...configAllowFrom, ...storeAllowList].filter(Boolean);
@@ -431,8 +429,7 @@ async function handleIncomingMessage(params: {
     return;
   }
 
-  const senderAllowed =
-    dmPolicy === "open" ? true : isAllowedSender(effectiveAllowFrom, senderId);
+  const senderAllowed = dmPolicy === "open" ? true : isAllowedSender(effectiveAllowFrom, senderId);
 
   const groupUsers = normalizeAllowlist(groupMatch.entry?.users);
   const senderAllowedForGroup = (() => {
@@ -468,9 +465,7 @@ async function handleIncomingMessage(params: {
             );
             statusSink?.({ lastOutboundAt: Date.now() });
           } catch (err) {
-            runtime.error(
-              `[proluofire-im] pairing reply failed for ${senderId}: ${String(err)}`,
-            );
+            runtime.error(`[proluofire-im] pairing reply failed for ${senderId}: ${String(err)}`);
           }
         }
       }
@@ -502,7 +497,9 @@ async function handleIncomingMessage(params: {
     allowTextCommands,
     hasControlCommand,
   });
-  const commandAuthorized = isGroup ? commandGate.commandAuthorized : senderAllowed || dmPolicy === "open";
+  const commandAuthorized = isGroup
+    ? commandGate.commandAuthorized
+    : senderAllowed || dmPolicy === "open";
 
   if (isGroup && commandGate.shouldBlock) {
     logInboundDrop({
@@ -553,9 +550,7 @@ async function handleIncomingMessage(params: {
   const storePath = core.channel.session.resolveStorePath(config.session?.store, {
     agentId: route.agentId,
   });
-  const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(
-    config as OpenClawConfig,
-  );
+  const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(config as OpenClawConfig);
   const previousTimestamp = core.channel.session.readSessionUpdatedAt({
     storePath,
     sessionKey: route.sessionKey,
@@ -643,9 +638,7 @@ async function handleIncomingMessage(params: {
         });
       },
       onError: (err, info) => {
-        runtime.error(
-          `[proluofire-im] ${info.kind} reply failed: ${String(err)}`,
-        );
+        runtime.error(`[proluofire-im] ${info.kind} reply failed: ${String(err)}`);
       },
     },
   });

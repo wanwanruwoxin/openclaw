@@ -1,7 +1,5 @@
 import { Buffer } from "node:buffer";
-
 import WebSocket from "ws";
-
 import type { CoreConfig } from "./types.js";
 import type {
   ProluofireImClient,
@@ -87,12 +85,19 @@ function parseTimestamp(value: unknown, fallback?: unknown): number {
 
 function parseInboundMessage(payload: unknown): ProluofireImMessage | null {
   if (!isRecord(payload)) return null;
-  const data = isRecord(payload.data) ? payload.data : null;
+
+  // Try to find the inner data/payload
+  const data = isRecord(payload.data) ? payload.data : payload;
   if (!data) return null;
-  const messagePayload = isRecord(data.payload) ? data.payload : null;
+  const messagePayload = isRecord(data.payload) ? data.payload : data;
   if (!messagePayload) return null;
 
-  const eventType = typeof data.eventType === "string" ? data.eventType : "";
+  // Check event type from either root or data
+  const rootEventType = typeof payload.eventType === "string" ? payload.eventType : "";
+  const eventType = typeof data.eventType === "string" ? data.eventType : rootEventType;
+
+  // If we have an event type, it MUST be ImMessageEvent.
+  // If no event type is found, we'll try to parse anyway if it looks like a message.
   if (eventType && eventType !== "ImMessageEvent") return null;
 
   const contentTypeRaw = messagePayload.contentType;
@@ -120,7 +125,9 @@ function parseInboundMessage(payload: unknown): ProluofireImMessage | null {
   if (!roomId || !userId) return null;
 
   const messageId =
-    normalizeId(messagePayload.id) || normalizeId(messagePayload.messageId) || normalizeId(data.refId);
+    normalizeId(messagePayload.id) ||
+    normalizeId(messagePayload.messageId) ||
+    normalizeId(data.refId);
   const replyMessageId = parseReplyMessageId(messagePayload.replyMessageId);
 
   return {
@@ -133,11 +140,7 @@ function parseInboundMessage(payload: unknown): ProluofireImMessage | null {
   };
 }
 
-function resolveWsUrl(params: {
-  serverUrl: string;
-  wsUrl?: string;
-  token?: string;
-}): string {
+function resolveWsUrl(params: { serverUrl: string; wsUrl?: string; token?: string }): string {
   const token = params.token?.trim();
   if (!token) {
     throw new Error("Missing API key for WebSocket connection");
@@ -220,9 +223,13 @@ export async function createProluofireImClient(params: {
   async function connectWebSocket(): Promise<void> {
     if (closing) return;
     if (ws && ws.readyState === WebSocket.OPEN) return;
+    if (ws && ws.readyState === WebSocket.CONNECTING) return;
 
     const wsAddress = resolveWsUrl({ serverUrl, wsUrl, token: bearerToken });
+    console.log(`[proluofire-im] connecting to WS: ${wsAddress}`);
     ws = new WebSocket(wsAddress);
+
+    let heartbeatTimer: NodeJS.Timeout | null = null;
 
     await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -240,16 +247,31 @@ export async function createProluofireImClient(params: {
         reject(err);
       };
 
+      const startHeartbeat = () => {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = setInterval(() => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send("ping");
+          }
+        }, 15000); // 15s heartbeat
+      };
+
       ws?.on("open", () => {
+        console.log("[proluofire-im] WS connected");
         opened = true;
         connected = true;
         reconnectAttempt = 0;
         updateStatus({ connected: true });
+        startHeartbeat();
         finishResolve();
       });
 
       ws?.on("message", (data) => {
         const raw = rawDataToString(data);
+        console.log(`[proluofire-im] raw WS message:`, raw);
+        // Handle pong/heartbeat response if needed
+        if (raw === "pong") return;
+
         let parsed: unknown;
         try {
           parsed = JSON.parse(raw) as unknown;
@@ -262,7 +284,12 @@ export async function createProluofireImClient(params: {
       });
 
       ws?.on("close", (code, reason) => {
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
         const errText = reason.toString("utf8");
+        console.log(`[proluofire-im] WS closed: code=${code}, reason=${errText}`);
         connected = false;
         updateStatus({ connected: false, error: errText || undefined });
         if (!closing) scheduleReconnect();
@@ -274,7 +301,12 @@ export async function createProluofireImClient(params: {
       });
 
       ws?.on("error", (err) => {
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
         const error = err instanceof Error ? err : new Error(String(err));
+        console.log(`[proluofire-im] WS error: ${error.message}`);
         if (!connected) {
           updateStatus({ connected: false, error: error.message });
           finishReject(error);
@@ -372,7 +404,10 @@ export async function createProluofireImClient(params: {
         });
         const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
         const messageId =
-          normalizeId(payload.messageId) || normalizeId(payload.id) || normalizeId(payload.data) || localId;
+          normalizeId(payload.messageId) ||
+          normalizeId(payload.id) ||
+          normalizeId(payload.data) ||
+          localId;
         return messageId;
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);

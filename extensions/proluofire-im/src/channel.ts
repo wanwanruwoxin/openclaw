@@ -12,15 +12,15 @@ import {
   type ChannelPlugin,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk";
-
-import { ProluofireImConfigSchema } from "./config-schema.js";
 import type { CoreConfig, ResolvedProluofireImAccount } from "./types.js";
 import {
   listProluofireImAccountIds,
   resolveDefaultProluofireImAccountId,
   resolveProluofireImAccount,
 } from "./accounts.js";
-import { sendMessageProluofireIm } from "./send.js";
+import { proluofireImMessageActions } from "./actions.js";
+import { ProluofireImConfigSchema } from "./config-schema.js";
+import { proluofireImOutbound } from "./outbound.js";
 import {
   formatProluofireImGroupEntry,
   formatProluofireImUserEntry,
@@ -29,8 +29,7 @@ import {
   normalizeProluofireImUserId,
   normalizeTarget,
 } from "./protocol.js";
-import { proluofireImOutbound } from "./outbound.js";
-import { proluofireImMessageActions } from "./actions.js";
+import { sendMessageProluofireIm } from "./send.js";
 
 const meta = {
   id: "proluofire-im",
@@ -173,10 +172,12 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
       baseUrl: account.serverUrl,
     }),
     resolveAllowFrom: ({ cfg, accountId }) =>
-      (resolveProluofireImAccount({
-        cfg: cfg as CoreConfig,
-        accountId: accountId ?? DEFAULT_ACCOUNT_ID,
-      }).config.dm?.allowFrom ?? []).map((entry) => String(entry)),
+      (
+        resolveProluofireImAccount({
+          cfg: cfg as CoreConfig,
+          accountId: accountId ?? DEFAULT_ACCOUNT_ID,
+        }).config.dm?.allowFrom ?? []
+      ).map((entry) => String(entry)),
     formatAllowFrom: ({ allowFrom }) =>
       allowFrom.map((entry) => formatProluofireImUserEntry(String(entry))).filter(Boolean),
   },
@@ -200,11 +201,12 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
     },
     collectWarnings: ({ account, cfg }) => {
       const coreConfig = cfg as CoreConfig;
-      const defaultGroupPolicy = (coreConfig.channels as OpenClawConfig["channels"])?.defaults?.groupPolicy;
+      const defaultGroupPolicy = (coreConfig.channels as OpenClawConfig["channels"])?.defaults
+        ?.groupPolicy;
       const groupPolicy = account.config.groupPolicy ?? defaultGroupPolicy ?? "allowlist";
       if (groupPolicy !== "open") return [];
       return [
-        "- Proluofire IM groups: groupPolicy=\"open\" allows any group to trigger. Set channels.proluofire-im.groupPolicy=\"allowlist\" + channels.proluofire-im.groups to restrict groups.",
+        '- Proluofire IM groups: groupPolicy="open" allows any group to trigger. Set channels.proluofire-im.groupPolicy="allowlist" + channels.proluofire-im.groups to restrict groups.',
       ];
     },
   },
@@ -464,13 +466,15 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
         });
 
         // Connect
-        await client.connect();
+        // The monitor will handle connection state, but we can trigger initial connection here
+        // if needed. However, since monitorProluofireImProvider handles events, we should
+        // probably start monitoring BEFORE connecting to avoid missing early events.
 
         // Mark as started
         markAccountStarted(account.accountId);
 
-        // Start monitoring
-        await monitorProluofireImProvider({
+        // Start monitoring (sets up listeners)
+        const monitorPromise = monitorProluofireImProvider({
           client,
           accountId: account.accountId,
           config: ctx.cfg as CoreConfig,
@@ -483,6 +487,12 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
             });
           },
         });
+
+        // Connect AFTER listeners are attached
+        await client.connect();
+
+        // Wait for monitor to finish (abort signal triggers this)
+        await monitorPromise;
 
         // Disconnect on shutdown
         await client.disconnect();

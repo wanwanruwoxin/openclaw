@@ -1,0 +1,60 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.2.6-3",
+    "lastTouchedAt": "2026-02-09T02:33:50.059Z"
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "/Users/qiuliang/company/openclaw/workspace",
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      }
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "channels": {
+    "proluofire-im": {
+      "enabled": true,
+      "name": "Dev Proluofire",
+      "serverUrl": "http://192.168.1.37:2000",
+      "wsUrl": "ws://192.168.1.37:2000/ws",
+      "apiKey": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4MDIxMzc3MjAsInVpZCI6MTUsInV1aWQiOiI4ZGM5NjUwNi1mNmU3LTRkMjUtYmFiMS0zYjdlMzRkNTU5ZDEiLCJsb2dpbl90eXBlIjoicm9ib3QiLCJmaW5nZXJwcmludCI6InJvYm90X2ZpbmdlcnByaW50IiwiZGV2aWNlX3R5cGUiOiJEZXNrdG9wIiwidGVuYW50X2lkIjoxLCJpc19zdXBlcl9hZG1pbiI6ZmFsc2UsImlzX2FkbWluIjpmYWxzZSwicm9sZXMiOltdfQ.EC-vC7r0tNy3DMMJe1Ap1l97KP1DJ1Vi83rGZy3WR80",
+      "dm": {
+        "policy": "pairing",
+        "allowFrom": []
+      },
+      "groupPolicy": "allowlist",
+      "groups": {
+        "#general": {
+          "users": ["*"],
+          "requireMention": true
+        }
+      }
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "port": 18790,
+    "auth": {
+      "mode": "token",
+      "token": "123456"
+    }
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/Users/qiuliang/company/openclaw/extensions/proluofire-im"]
+    },
+    "entries": {
+      "proluofire-im": {
+        "enabled": true
+      }
+    }
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  }
+}
