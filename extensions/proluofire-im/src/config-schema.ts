@@ -46,6 +46,7 @@ const baseAccountConfigSchema = z.object({
   apiKey: z.string().optional(),
   username: z.string().optional(),
   password: z.string().optional(),
+  botUid: z.union([z.string(), z.number()]).optional(),
   dm: dmPolicySchema.optional(),
   groupPolicy: z.enum(["allowlist", "open", "disabled"]).optional(),
   groups: z.record(z.string(), groupConfigSchema).optional(),

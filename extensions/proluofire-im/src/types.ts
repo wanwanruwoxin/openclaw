@@ -18,6 +18,7 @@ export interface ProluofireImChannelConfig {
   apiKey?: string;
   username?: string;
   password?: string;
+  botUid?: string | number;
   dm?: {
     policy?: "pairing" | "allowlist" | "open";
     allowFrom?: string[];
@@ -45,6 +46,7 @@ export interface ProluofireImAccountConfig {
   apiKey?: string;
   username?: string;
   password?: string;
+  botUid?: string | number;
   dm?: {
     policy?: "pairing" | "allowlist" | "open";
     allowFrom?: string[];

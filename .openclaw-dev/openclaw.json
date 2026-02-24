@@ -45,8 +45,9 @@
     "proluofire-im": {
       "enabled": true,
       "name": "Dev Proluofire",
-      "serverUrl": "http://192.168.1.37:2000",
-      "wsUrl": "ws://192.168.1.37:2000/ws",
+      "serverUrl": "http://192.168.1.33:2000",
+      "wsUrl": "ws://192.168.1.33:2000/ws",
+      "botUid": 15,
       "apiKey": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4MDIxMzc3MjAsInVpZCI6MTUsInV1aWQiOiI4ZGM5NjUwNi1mNmU3LTRkMjUtYmFiMS0zYjdlMzRkNTU5ZDEiLCJsb2dpbl90eXBlIjoicm9ib3QiLCJmaW5nZXJwcmludCI6InJvYm90X2ZpbmdlcnByaW50IiwiZGV2aWNlX3R5cGUiOiJEZXNrdG9wIiwidGVuYW50X2lkIjoxLCJpc19zdXBlcl9hZG1pbiI6ZmFsc2UsImlzX2FkbWluIjpmYWxzZSwicm9sZXMiOltdfQ.EC-vC7r0tNy3DMMJe1Ap1l97KP1DJ1Vi83rGZy3WR80",
       "dm": {
         "policy": "open",

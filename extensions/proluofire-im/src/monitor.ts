@@ -400,6 +400,13 @@ async function handleIncomingMessage(params: {
   const isGroup = Boolean(toTarget && toTarget.startsWith("#"));
   const senderId = normalizeProluofireImUserId(String(fromTarget || message.from || ""));
   const groupId = isGroup ? normalizeProluofireImGroupId(String(toTarget)) : "";
+  const botUid = account.config.botUid
+    ? normalizeProluofireImUserId(String(account.config.botUid))
+    : "";
+  if (botUid && senderId === botUid) {
+    runtime.log(`[proluofire-im] drop self message senderId=${senderId}`);
+    return;
+  }
 
   runtime.log(
     `[proluofire-im] processing message: isGroup=${isGroup}, toTarget=${toTarget}, senderId=${senderId}, roomId=${message.roomId ?? ""}, rawBody=${JSON.stringify(rawBody)}`,
