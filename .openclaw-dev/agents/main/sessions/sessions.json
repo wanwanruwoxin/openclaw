@@ -1,19 +1,24 @@
 {
   "agent:main:main": {
     "sessionId": "6f5af250-f05a-4652-9668-2b2b9122acb6",
-    "updatedAt": 1770684157185,
+    "updatedAt": 1771916435794,
     "systemSent": true,
     "abortedLastRun": false,
     "chatType": "direct",
     "deliveryContext": {
-      "channel": "webchat"
+      "channel": "proluofire-im",
+      "to": "proluofire-im:14",
+      "accountId": "default"
     },
-    "lastChannel": "webchat",
+    "lastChannel": "proluofire-im",
     "origin": {
-      "label": "openclaw-tui",
-      "provider": "webchat",
-      "surface": "webchat",
-      "chatType": "direct"
+      "label": "@6",
+      "provider": "proluofire-im",
+      "surface": "proluofire-im",
+      "chatType": "direct",
+      "from": "proluofire-im:@6",
+      "to": "proluofire-im:14",
+      "accountId": "default"
     },
     "sessionFile": "/Users/qiuliang/company/openclaw/.openclaw-dev/agents/main/sessions/6f5af250-f05a-4652-9668-2b2b9122acb6.jsonl",
     "compactionCount": 0,
@@ -149,15 +154,15 @@
     "authProfileOverride": "zai:default",
     "authProfileOverrideSource": "auto",
     "authProfileOverrideCompactionCount": 0,
-    "inputTokens": 1299,
-    "outputTokens": 213,
-    "totalTokens": 14095,
+    "inputTokens": 6618,
+    "outputTokens": 46,
+    "totalTokens": 14261,
     "modelProvider": "zai",
     "model": "glm-4.7",
     "contextTokens": 204800,
     "systemPromptReport": {
       "source": "run",
-      "generatedAt": 1770684126628,
+      "generatedAt": 1771916433109,
       "sessionId": "6f5af250-f05a-4652-9668-2b2b9122acb6",
       "sessionKey": "agent:main:main",
       "provider": "zai",
@@ -169,9 +174,9 @@
         "sandboxed": false
       },
       "systemPrompt": {
-        "chars": 25526,
-        "projectContextChars": 13365,
-        "nonProjectContextChars": 12161
+        "chars": 23506,
+        "projectContextChars": 11330,
+        "nonProjectContextChars": 12176
       },
       "injectedWorkspaceFiles": [
         {
@@ -202,16 +207,16 @@
           "name": "IDENTITY.md",
           "path": "/Users/qiuliang/company/openclaw/workspace/IDENTITY.md",
           "missing": false,
-          "rawChars": 633,
-          "injectedChars": 633,
+          "rawChars": 155,
+          "injectedChars": 155,
           "truncated": false
         },
         {
           "name": "USER.md",
           "path": "/Users/qiuliang/company/openclaw/workspace/USER.md",
           "missing": false,
-          "rawChars": 474,
-          "injectedChars": 474,
+          "rawChars": 288,
+          "injectedChars": 288,
           "truncated": false
         },
         {
@@ -225,9 +230,9 @@
         {
           "name": "BOOTSTRAP.md",
           "path": "/Users/qiuliang/company/openclaw/workspace/BOOTSTRAP.md",
-          "missing": false,
-          "rawChars": 1449,
-          "injectedChars": 1449,
+          "missing": true,
+          "rawChars": 0,
+          "injectedChars": 78,
           "truncated": false
         }
       ],
@@ -281,8 +286,8 @@
         ]
       },
       "tools": {
-        "listChars": 1926,
-        "schemaChars": 14674,
+        "listChars": 1984,
+        "schemaChars": 14837,
         "entries": [
           {
             "name": "read",
@@ -405,6 +410,12 @@
             "propertiesCount": 3
           },
           {
+            "name": "image",
+            "summaryChars": 118,
+            "schemaChars": 163,
+            "propertiesCount": 4
+          },
+          {
             "name": "memory_search",
             "summaryChars": 235,
             "schemaChars": 139,
@@ -418,7 +429,9 @@
           }
         ]
       }
-    }
+    },
+    "lastTo": "proluofire-im:14",
+    "lastAccountId": "default"
   },
   "agent:main:proluofire-im:dm:6": {
     "origin": {

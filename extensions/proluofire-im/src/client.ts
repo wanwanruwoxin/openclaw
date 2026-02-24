@@ -121,8 +121,11 @@ function parseInboundMessage(payload: unknown): ProluofireImMessage | null {
   if (!content.trim()) return null;
 
   const roomId = normalizeId(messagePayload.roomId);
-  const userId = normalizeId(messagePayload.userId ?? data.uid);
+  const rawUserId = normalizeId(messagePayload.userId);
+  const currentUid = normalizeId(data.uid);
+  const userId = rawUserId || currentUid;
   if (!roomId || !userId) return null;
+  if (rawUserId && currentUid && rawUserId === currentUid) return null;
 
   const messageId =
     normalizeId(messagePayload.id) ||
