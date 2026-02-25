@@ -24,6 +24,13 @@ function rawDataToString(data: WebSocket.RawData): string {
   return Buffer.from(String(data)).toString("utf8");
 }
 
+function stringifyLargeIntegers(raw: string): string {
+  return raw.replace(
+    /"(roomId|id|uid|refId|userId|seq|replyMessageId)"\s*:\s*(\d{16,})/g,
+    (_match, key, value) => `"${String(key)}":"${String(value)}"`,
+  );
+}
+
 function normalizeId(value: unknown): string {
   if (typeof value === "number" && Number.isFinite(value)) return String(Math.trunc(value));
   if (typeof value === "string") return value.trim();
@@ -382,7 +389,8 @@ export async function createProluofireImClient(params: {
 
         let parsed: unknown;
         try {
-          parsed = JSON.parse(raw) as unknown;
+          const safeRaw = stringifyLargeIntegers(raw);
+          parsed = JSON.parse(safeRaw) as unknown;
         } catch {
           return;
         }
@@ -500,15 +508,30 @@ export async function createProluofireImClient(params: {
         const roomId = resolveRoomIdFromTarget(target);
         const replyMessageId = parseReplyMessageId(options?.replyToId);
         const localId = options?.localId?.trim() || buildLocalId();
+        const numericRoomId = /^\d+$/.test(roomId) ? roomId : "";
+        const requestBody = {
+          room_id: numericRoomId ? `__room_id__${numericRoomId}__` : roomId,
+          local_id: localId,
+          content_type: 1,
+          content,
+          reply_message_id: replyMessageId,
+        };
+        let body = JSON.stringify(requestBody);
+        if (numericRoomId) {
+          body = body.replace(
+            `"room_id":"__room_id__${numericRoomId}__"`,
+            `"room_id":${numericRoomId}`,
+          );
+        }
+        console.log(
+          `[proluofire-im] send_message request: ${JSON.stringify({
+            endpoint: "/api/messages/send_message",
+            body,
+          })}`,
+        );
         const response = await makeRequest("/api/messages/send_message", {
           method: "POST",
-          body: JSON.stringify({
-            room_id: coerceRoomId(roomId),
-            local_id: localId,
-            content_type: 1,
-            content,
-            reply_message_id: replyMessageId,
-          }),
+          body,
         });
         const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
         const messageId =

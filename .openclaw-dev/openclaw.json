@@ -45,13 +45,12 @@
     "proluofire-im": {
       "enabled": true,
       "name": "Dev Proluofire",
-      "serverUrl": "http://192.168.1.33:2000",
-      "wsUrl": "ws://192.168.1.33:2000/ws",
-      "botUid": 15,
-      "apiKey": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4MDIxMzc3MjAsInVpZCI6MTUsInV1aWQiOiI4ZGM5NjUwNi1mNmU3LTRkMjUtYmFiMS0zYjdlMzRkNTU5ZDEiLCJsb2dpbl90eXBlIjoicm9ib3QiLCJmaW5nZXJwcmludCI6InJvYm90X2ZpbmdlcnByaW50IiwiZGV2aWNlX3R5cGUiOiJEZXNrdG9wIiwidGVuYW50X2lkIjoxLCJpc19zdXBlcl9hZG1pbiI6ZmFsc2UsImlzX2FkbWluIjpmYWxzZSwicm9sZXMiOltdfQ.EC-vC7r0tNy3DMMJe1Ap1l97KP1DJ1Vi83rGZy3WR80",
+      "serverUrl": "http://192.168.1.37:2000",
+      "wsUrl": "ws://192.168.1.37:2000/ws",
+      "botUid": 284951422221418496,
+      "apiKey": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4MDM1NDA5MTMsInVpZCI6Mjg0OTUxNDIyMjIxNDE4NDk2LCJ1dWlkIjoiMzY1YThmMTUtOWM5OS00MWU3LWJlZTctZWU3NWRmNzE4YjRmIiwibG9naW5fdHlwZSI6InJvYm90IiwiZmluZ2VycHJpbnQiOiJyb2JvdF8yODQ5NTE0MjIyMjE0MTg0OTYiLCJkZXZpY2VfdHlwZSI6IkRlc2t0b3AiLCJ0ZW5hbnRfaWQiOjEsImlzX3N1cGVyX2FkbWluIjpmYWxzZSwiaXNfYWRtaW4iOmZhbHNlLCJyb2xlX2lkcyI6W119.9sAuj1fn1v1oi-pWhzk6gHmPi-1dBw_C8y5gE_pWwVU",
       "dm": {
-        "policy": "open",
-        "allowFrom": ["*"]
+        "policy": "pairing"
       },
       "groupPolicy": "allowlist",
       "groups": {

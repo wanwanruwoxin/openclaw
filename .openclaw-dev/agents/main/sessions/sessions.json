@@ -1,13 +1,13 @@
 {
   "agent:main:main": {
     "sessionId": "6f5af250-f05a-4652-9668-2b2b9122acb6",
-    "updatedAt": 1771920305640,
+    "updatedAt": 1772009429995,
     "systemSent": true,
     "abortedLastRun": false,
     "chatType": "direct",
     "deliveryContext": {
       "channel": "proluofire-im",
-      "to": "proluofire-im:14",
+      "to": "proluofire-im:284951422334664704",
       "accountId": "default"
     },
     "lastChannel": "proluofire-im",
@@ -17,7 +17,7 @@
       "surface": "proluofire-im",
       "chatType": "direct",
       "from": "proluofire-im:@6",
-      "to": "proluofire-im:14",
+      "to": "proluofire-im:284951422334664704",
       "accountId": "default"
     },
     "sessionFile": "/Users/qiuliang/company/openclaw/.openclaw-dev/agents/main/sessions/6f5af250-f05a-4652-9668-2b2b9122acb6.jsonl",
@@ -154,15 +154,15 @@
     "authProfileOverride": "zai:default",
     "authProfileOverrideSource": "auto",
     "authProfileOverrideCompactionCount": 0,
-    "inputTokens": 6679,
-    "outputTokens": 91,
-    "totalTokens": 14322,
+    "inputTokens": 12081,
+    "outputTokens": 72,
+    "totalTokens": 19724,
     "modelProvider": "zai",
     "model": "glm-4.7",
     "contextTokens": 204800,
     "systemPromptReport": {
       "source": "run",
-      "generatedAt": 1771920282048,
+      "generatedAt": 1772009426994,
       "sessionId": "6f5af250-f05a-4652-9668-2b2b9122acb6",
       "sessionKey": "agent:main:main",
       "provider": "zai",
@@ -430,7 +430,7 @@
         ]
       }
     },
-    "lastTo": "proluofire-im:14",
+    "lastTo": "proluofire-im:284951422334664704",
     "lastAccountId": "default"
   },
   "agent:main:proluofire-im:dm:6": {

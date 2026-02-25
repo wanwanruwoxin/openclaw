@@ -378,6 +378,171 @@ export async function monitorProluofireImProvider(params: {
   });
 }
 
+type MessageIdentity = {
+  fromTarget: string;
+  toTarget: string;
+  senderId: string;
+  groupId: string;
+  isGroup: boolean;
+};
+
+type MessagePolicies = {
+  dmPolicy: "pairing" | "allowlist" | "open";
+  groupPolicy: "allowlist" | "open" | "disabled";
+  effectiveAllowFrom: string[];
+  effectiveGroupAllowFrom: string[];
+};
+
+function identifyMessageParticipants(params: {
+  message: ProluofireImMessage;
+  decoded: ReturnType<typeof decodeMessage>;
+  account: ResolvedProluofireImAccount;
+}): MessageIdentity {
+  const { message, decoded } = params;
+  const fromTarget = normalizeTarget(String(decoded.from ?? message.from ?? ""));
+  const toTarget = normalizeTarget(String(message.to ?? ""));
+  const isGroup = Boolean(toTarget && toTarget.startsWith("#"));
+  const senderId = normalizeProluofireImUserId(String(fromTarget || message.from || ""));
+  const groupId = isGroup ? normalizeProluofireImGroupId(String(toTarget)) : "";
+  return { fromTarget, toTarget, senderId, groupId, isGroup };
+}
+
+function isSelfMessage(params: {
+  senderId: string;
+  account: ResolvedProluofireImAccount;
+}): boolean {
+  const botUid = params.account.config.botUid
+    ? normalizeProluofireImUserId(String(params.account.config.botUid))
+    : "";
+  return Boolean(botUid && params.senderId === botUid);
+}
+
+async function resolveMessagePolicies(params: {
+  account: ResolvedProluofireImAccount;
+  config: CoreConfig;
+  core: ReturnType<typeof getProluofireImRuntime>;
+}): Promise<MessagePolicies> {
+  const { account, config, core } = params;
+  const dmPolicy = account.config.dm?.policy ?? "pairing";
+  const defaultGroupPolicy = (config.channels as OpenClawConfig["channels"])?.defaults?.groupPolicy;
+  const groupPolicy = account.config.groupPolicy ?? defaultGroupPolicy ?? "allowlist";
+
+  const configAllowFrom = normalizeAllowlist(account.config.dm?.allowFrom);
+  const configGroupAllowFrom = normalizeAllowlist(account.config.groupAllowFrom);
+  const storeAllowFrom = await core.channel.pairing.readAllowFromStore(CHANNEL_ID).catch(() => []);
+  const storeAllowList = normalizeAllowlist(storeAllowFrom);
+
+  const effectiveAllowFrom = [...configAllowFrom, ...storeAllowList].filter(Boolean);
+  const baseGroupAllowFrom =
+    configGroupAllowFrom.length > 0 ? configGroupAllowFrom : configAllowFrom;
+  const effectiveGroupAllowFrom = [...baseGroupAllowFrom, ...storeAllowList].filter(Boolean);
+
+  return { dmPolicy, groupPolicy, effectiveAllowFrom, effectiveGroupAllowFrom };
+}
+
+async function validateGroupAccess(params: {
+  identity: MessageIdentity;
+  policies: MessagePolicies;
+  account: ResolvedProluofireImAccount;
+  runtime: RuntimeEnv;
+}): Promise<{ allowed: boolean; groupMatch: GroupMatch; groupUsers: string[] }> {
+  const { identity, policies, account, runtime } = params;
+
+  if (!identity.isGroup) {
+    return {
+      allowed: true,
+      groupMatch: { allowed: true, allowlistConfigured: false },
+      groupUsers: [],
+    };
+  }
+
+  const groupMatch = resolveGroupMatch({
+    groups: account.config.groups,
+    groupId: identity.toTarget,
+    groupPolicy: policies.groupPolicy,
+  });
+
+  if (policies.groupPolicy === "disabled") {
+    runtime.log(`[proluofire-im] drop group ${identity.toTarget} (groupPolicy=disabled)`);
+    return { allowed: false, groupMatch, groupUsers: [] };
+  }
+
+  if (policies.groupPolicy !== "open" && !groupMatch.allowed) {
+    runtime.log(
+      `[proluofire-im] drop group ${identity.toTarget} (not allowlisted) - policy: ${policies.groupPolicy}, matched: ${!!groupMatch.entry}, wildcard: ${!!groupMatch.wildcard}`,
+    );
+    return { allowed: false, groupMatch, groupUsers: [] };
+  }
+
+  const groupUsers = normalizeAllowlist(groupMatch.entry?.users);
+  const allowFrom = groupUsers.length > 0 ? groupUsers : policies.effectiveGroupAllowFrom;
+  const senderAllowed = allowFrom.length === 0 || isAllowedSender(allowFrom, identity.senderId);
+
+  if (!senderAllowed) {
+    runtime.log(
+      `[proluofire-im] drop group sender ${identity.senderId} (not allowlisted) - groupUsers: ${groupUsers.join(",")}, effectiveGroupAllowFrom: ${policies.effectiveGroupAllowFrom.join(",")}`,
+    );
+    return { allowed: false, groupMatch, groupUsers };
+  }
+
+  return { allowed: true, groupMatch, groupUsers };
+}
+
+async function validateDmAccess(params: {
+  identity: MessageIdentity;
+  policies: MessagePolicies;
+  account: ResolvedProluofireImAccount;
+  config: CoreConfig;
+  core: ReturnType<typeof getProluofireImRuntime>;
+  runtime: RuntimeEnv;
+  roomId?: string;
+  statusSink?: ProluofireImStatusSink;
+}): Promise<boolean> {
+  const { identity, policies, account, config, core, runtime, roomId, statusSink } = params;
+
+  if (identity.isGroup) return true;
+
+  const senderAllowed =
+    policies.dmPolicy === "open" || isAllowedSender(policies.effectiveAllowFrom, identity.senderId);
+
+  if (!senderAllowed) {
+    if (policies.dmPolicy === "pairing") {
+      const { code, created } = await core.channel.pairing.upsertPairingRequest({
+        channel: CHANNEL_ID,
+        id: identity.senderId,
+        meta: { name: formatProluofireImUserEntry(identity.senderId) },
+      });
+      if (created) {
+        try {
+          const pairingTarget = roomId?.trim()
+            ? roomId
+            : formatProluofireImUserEntry(identity.senderId);
+          await sendMessageProluofireIm(
+            pairingTarget,
+            core.channel.pairing.buildPairingReply({
+              channel: CHANNEL_ID,
+              idLine: `Your Proluofire IM user id: ${formatProluofireImUserEntry(identity.senderId)}`,
+              code,
+            }),
+            { cfg: config, accountId: account.accountId },
+          );
+          statusSink?.({ lastOutboundAt: Date.now() });
+        } catch (err) {
+          runtime.error(
+            `[proluofire-im] pairing reply failed for ${identity.senderId}: ${String(err)}`,
+          );
+        }
+      }
+    }
+    runtime.log(
+      `[proluofire-im] drop DM sender ${identity.senderId} (dmPolicy=${policies.dmPolicy})`,
+    );
+    return false;
+  }
+
+  return true;
+}
+
 async function handleIncomingMessage(params: {
   message: ProluofireImMessage;
   account: ResolvedProluofireImAccount;
@@ -395,105 +560,38 @@ async function handleIncomingMessage(params: {
   const attachments = message.attachments ?? [];
   if (!rawBody.trim() && attachments.length === 0) return;
 
-  const fromTarget = normalizeTarget(String(decoded.from ?? message.from ?? ""));
-  const toTarget = normalizeTarget(String(message.to ?? ""));
-  const isGroup = Boolean(toTarget && toTarget.startsWith("#"));
-  const senderId = normalizeProluofireImUserId(String(fromTarget || message.from || ""));
-  const groupId = isGroup ? normalizeProluofireImGroupId(String(toTarget)) : "";
-  const botUid = account.config.botUid
-    ? normalizeProluofireImUserId(String(account.config.botUid))
-    : "";
-  if (botUid && senderId === botUid) {
-    runtime.log(`[proluofire-im] drop self message senderId=${senderId}`);
+  const identity = identifyMessageParticipants({ message, decoded, account });
+
+  if (isSelfMessage({ senderId: identity.senderId, account })) {
+    runtime.log(`[proluofire-im] drop self message senderId=${identity.senderId}`);
     return;
   }
 
   runtime.log(
-    `[proluofire-im] processing message: isGroup=${isGroup}, toTarget=${toTarget}, senderId=${senderId}, roomId=${message.roomId ?? ""}, rawBody=${JSON.stringify(rawBody)}`,
+    `[proluofire-im] processing message: isGroup=${identity.isGroup}, toTarget=${identity.toTarget}, senderId=${identity.senderId}, roomId=${message.roomId ?? ""}, rawBody=${JSON.stringify(rawBody)}`,
   );
 
   statusSink?.({ lastInboundAt: Date.now() });
 
-  const dmPolicy = account.config.dm?.policy ?? "pairing";
-  const defaultGroupPolicy = (config.channels as OpenClawConfig["channels"])?.defaults?.groupPolicy;
-  const groupPolicy = account.config.groupPolicy ?? defaultGroupPolicy ?? "allowlist";
+  const policies = await resolveMessagePolicies({ account, config, core });
 
-  const configAllowFrom = normalizeAllowlist(account.config.dm?.allowFrom);
-  const configGroupAllowFrom = normalizeAllowlist(account.config.groupAllowFrom);
-  const storeAllowFrom = await core.channel.pairing.readAllowFromStore(CHANNEL_ID).catch(() => []);
-  const storeAllowList = normalizeAllowlist(storeAllowFrom);
+  const groupValidation = await validateGroupAccess({ identity, policies, account, runtime });
+  if (!groupValidation.allowed) return;
 
-  const effectiveAllowFrom = [...configAllowFrom, ...storeAllowList].filter(Boolean);
-  const baseGroupAllowFrom =
-    configGroupAllowFrom.length > 0 ? configGroupAllowFrom : configAllowFrom;
-  const effectiveGroupAllowFrom = [...baseGroupAllowFrom, ...storeAllowList].filter(Boolean);
+  const dmAllowed = await validateDmAccess({
+    identity,
+    policies,
+    account,
+    config,
+    core,
+    runtime,
+    roomId: message.roomId ? String(message.roomId) : undefined,
+    statusSink,
+  });
+  if (!dmAllowed) return;
 
-  const groupMatch = isGroup
-    ? resolveGroupMatch({
-        groups: account.config.groups,
-        groupId: toTarget,
-        groupPolicy,
-      })
-    : { allowed: true, allowlistConfigured: false };
-
-  if (isGroup && groupPolicy === "disabled") {
-    runtime.log(`[proluofire-im] drop group ${toTarget} (groupPolicy=disabled)`);
-    return;
-  }
-
-  if (isGroup && groupPolicy !== "open" && !groupMatch.allowed) {
-    runtime.log(
-      `[proluofire-im] drop group ${toTarget} (not allowlisted) - policy: ${groupPolicy}, matched: ${!!groupMatch.entry}, wildcard: ${!!groupMatch.wildcard}`,
-    );
-    return;
-  }
-
-  const senderAllowed = dmPolicy === "open" ? true : isAllowedSender(effectiveAllowFrom, senderId);
-
-  const groupUsers = normalizeAllowlist(groupMatch.entry?.users);
-  const senderAllowedForGroup = (() => {
-    if (!isGroup) return true;
-    const allowFrom = groupUsers.length > 0 ? groupUsers : effectiveGroupAllowFrom;
-    if (allowFrom.length === 0) return true;
-    return isAllowedSender(allowFrom, senderId);
-  })();
-
-  if (isGroup && !senderAllowedForGroup) {
-    runtime.log(
-      `[proluofire-im] drop group sender ${senderId} (not allowlisted) - groupUsers: ${groupUsers.join(",")}, effectiveGroupAllowFrom: ${effectiveGroupAllowFrom.join(",")}`,
-    );
-    return;
-  }
-
-  if (!isGroup) {
-    if (!senderAllowed) {
-      if (dmPolicy === "pairing") {
-        const { code, created } = await core.channel.pairing.upsertPairingRequest({
-          channel: CHANNEL_ID,
-          id: senderId,
-          meta: { name: formatProluofireImUserEntry(senderId) },
-        });
-        if (created) {
-          try {
-            await sendMessageProluofireIm(
-              formatProluofireImUserEntry(senderId),
-              core.channel.pairing.buildPairingReply({
-                channel: CHANNEL_ID,
-                idLine: `Your Proluofire IM user id: ${formatProluofireImUserEntry(senderId)}`,
-                code,
-              }),
-              { cfg: config, accountId: account.accountId },
-            );
-            statusSink?.({ lastOutboundAt: Date.now() });
-          } catch (err) {
-            runtime.error(`[proluofire-im] pairing reply failed for ${senderId}: ${String(err)}`);
-          }
-        }
-      }
-      runtime.log(`[proluofire-im] drop DM sender ${senderId} (dmPolicy=${dmPolicy})`);
-      return;
-    }
-  }
+  const senderAllowed =
+    policies.dmPolicy === "open" || isAllowedSender(policies.effectiveAllowFrom, identity.senderId);
 
   const allowTextCommands = core.channel.commands.shouldHandleTextCommands({
     cfg: config as OpenClawConfig,
@@ -501,47 +599,49 @@ async function handleIncomingMessage(params: {
   });
   const useAccessGroups = config.commands?.useAccessGroups !== false;
   const hasControlCommand = core.channel.text.hasControlCommand(rawBody, config as OpenClawConfig);
-  const commandAllowFrom = isGroup
-    ? groupUsers.length > 0
-      ? groupUsers
-      : effectiveGroupAllowFrom
-    : effectiveAllowFrom;
-  const senderAllowedForCommands = isAllowedSender(commandAllowFrom, senderId);
+  const commandAllowFrom = identity.isGroup
+    ? groupValidation.groupUsers.length > 0
+      ? groupValidation.groupUsers
+      : policies.effectiveGroupAllowFrom
+    : policies.effectiveAllowFrom;
+  const senderAllowedForCommands = isAllowedSender(commandAllowFrom, identity.senderId);
   const commandGate = resolveControlCommandGate({
     useAccessGroups,
     authorizers: [
       {
-        configured: (isGroup ? effectiveGroupAllowFrom : effectiveAllowFrom).length > 0,
+        configured:
+          (identity.isGroup ? policies.effectiveGroupAllowFrom : policies.effectiveAllowFrom)
+            .length > 0,
         allowed: senderAllowedForCommands,
       },
     ],
     allowTextCommands,
     hasControlCommand,
   });
-  const commandAuthorized = isGroup
+  const commandAuthorized = identity.isGroup
     ? commandGate.commandAuthorized
-    : senderAllowed || dmPolicy === "open";
+    : senderAllowed || policies.dmPolicy === "open";
 
-  if (isGroup && commandGate.shouldBlock) {
+  if (identity.isGroup && commandGate.shouldBlock) {
     logInboundDrop({
       log: (message) => runtime.log(message),
       channel: CHANNEL_ID,
       reason: "control command (unauthorized)",
-      target: senderId,
+      target: identity.senderId,
     });
     return;
   }
 
   runtime.log(
-    `[proluofire-im] resolving agent route... isGroup=${isGroup}, toTarget=${toTarget}, senderId=${senderId}`,
+    `[proluofire-im] resolving agent route... isGroup=${identity.isGroup}, toTarget=${identity.toTarget}, senderId=${identity.senderId}`,
   );
   const route = core.channel.routing.resolveAgentRoute({
     cfg: config as OpenClawConfig,
     channel: CHANNEL_ID,
     accountId: account.accountId,
     peer: {
-      kind: isGroup ? "group" : "direct",
-      id: isGroup ? toTarget : senderId,
+      kind: identity.isGroup ? "group" : "direct",
+      id: identity.isGroup ? identity.toTarget : identity.senderId,
     },
   });
   runtime.log(
@@ -556,14 +656,16 @@ async function handleIncomingMessage(params: {
   runtime.log(`[proluofire-im] mentionRegexes: ${mentionRegexes}`);
 
   const wasMentioned =
-    isGroup && mentionRegexes.length > 0
+    identity.isGroup && mentionRegexes.length > 0
       ? core.channel.mentions.matchesMentionPatterns(rawBody, mentionRegexes)
       : false;
   runtime.log(`[proluofire-im] wasMentioned: ${wasMentioned}`);
 
-  const requireMention = isGroup ? resolveRequireMention(groupMatch) : false;
+  const requireMention = identity.isGroup
+    ? resolveRequireMention(groupValidation.groupMatch)
+    : false;
   const mentionGate = resolveMentionGatingWithBypass({
-    isGroup,
+    isGroup: identity.isGroup,
     requireMention,
     canDetectMention: mentionRegexes.length > 0,
     wasMentioned,
@@ -572,25 +674,27 @@ async function handleIncomingMessage(params: {
     commandAuthorized,
   });
 
-  if (isGroup && mentionGate.shouldSkip) {
+  if (identity.isGroup && mentionGate.shouldSkip) {
     runtime.log(
-      `[proluofire-im] drop group ${toTarget} (no mention) - rawBody: ${JSON.stringify(rawBody)}, mentionRegexes: ${mentionRegexes}`,
+      `[proluofire-im] drop group ${identity.toTarget} (no mention) - rawBody: ${JSON.stringify(rawBody)}, mentionRegexes: ${mentionRegexes}`,
     );
     return;
   }
 
   runtime.log(
-    `[proluofire-im] passed mention gate. isGroup=${isGroup}, requireMention=${requireMention}, wasMentioned=${wasMentioned}`,
+    `[proluofire-im] passed mention gate. isGroup=${identity.isGroup}, requireMention=${requireMention}, wasMentioned=${wasMentioned}`,
   );
 
   // Debug log for potential type errors
   runtime.log(
-    `[proluofire-im] Debug: groupId=${typeof groupId} ${JSON.stringify(groupId)}, toTarget=${typeof toTarget} ${JSON.stringify(toTarget)}, senderId=${typeof senderId} ${JSON.stringify(senderId)}, fromTarget=${typeof fromTarget} ${JSON.stringify(fromTarget)}, message.from=${typeof message.from} ${JSON.stringify(message.from)}`,
+    `[proluofire-im] Debug: groupId=${typeof identity.groupId} ${JSON.stringify(identity.groupId)}, toTarget=${typeof identity.toTarget} ${JSON.stringify(identity.toTarget)}, senderId=${typeof identity.senderId} ${JSON.stringify(identity.senderId)}, fromTarget=${typeof identity.fromTarget} ${JSON.stringify(identity.fromTarget)}, message.from=${typeof message.from} ${JSON.stringify(message.from)}`,
   );
 
-  const fromLabel = isGroup
-    ? formatProluofireImGroupEntry(String(groupId || toTarget || ""))
-    : formatProluofireImUserEntry(String(senderId || fromTarget || message.from || ""));
+  const fromLabel = identity.isGroup
+    ? formatProluofireImGroupEntry(String(identity.groupId || identity.toTarget || ""))
+    : formatProluofireImUserEntry(
+        String(identity.senderId || identity.fromTarget || message.from || ""),
+      );
   runtime.log(`[proluofire-im] resolving session path for agentId=${route.agentId}...`);
   const storePath = core.channel.session.resolveStorePath(config.session?.store, {
     agentId: route.agentId,
@@ -626,28 +730,31 @@ async function handleIncomingMessage(params: {
     : null;
   runtime.log(`[proluofire-im] attachment processed. media=${!!media}`);
 
-  const replyTarget = isGroup
-    ? formatProluofireImGroupEntry(groupId || toTarget)
+  const replyTarget = identity.isGroup
+    ? formatProluofireImGroupEntry(identity.groupId || identity.toTarget)
     : message.roomId
       ? String(message.roomId)
-      : formatProluofireImUserEntry(senderId || fromTarget);
+      : formatProluofireImUserEntry(identity.senderId || identity.fromTarget);
   const ctxPayload = core.channel.reply.finalizeInboundContext({
     Body: body,
     RawBody: rawBody,
     CommandBody: rawBody,
-    From: `proluofire-im:${fromTarget || message.from || ""}`,
-    To: `proluofire-im:${toTarget || message.to || ""}`,
+    From: `proluofire-im:${identity.fromTarget || message.from || ""}`,
+    To: `proluofire-im:${identity.toTarget || message.to || ""}`,
     SessionKey: route.sessionKey,
     AccountId: route.accountId,
-    ChatType: isGroup ? "group" : "direct",
+    ChatType: identity.isGroup ? "group" : "direct",
     ConversationLabel: fromLabel,
-    SenderName: formatProluofireImUserEntry(String(senderId || fromTarget || message.from || "")),
-    SenderId: senderId,
-    GroupChannel: isGroup
-      ? formatProluofireImGroupEntry(String(groupId || toTarget || "")) || undefined
+    SenderName: formatProluofireImUserEntry(
+      String(identity.senderId || identity.fromTarget || message.from || ""),
+    ),
+    SenderId: identity.senderId,
+    GroupChannel: identity.isGroup
+      ? formatProluofireImGroupEntry(String(identity.groupId || identity.toTarget || "")) ||
+        undefined
       : undefined,
-    GroupSubject: isGroup ? groupId || undefined : undefined,
-    WasMentioned: isGroup ? wasMentioned : undefined,
+    GroupSubject: identity.isGroup ? identity.groupId || undefined : undefined,
+    WasMentioned: identity.isGroup ? wasMentioned : undefined,
     CommandAuthorized: commandAuthorized,
     Provider: CHANNEL_ID,
     Surface: CHANNEL_ID,
