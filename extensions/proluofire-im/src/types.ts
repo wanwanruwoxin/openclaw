@@ -81,6 +81,8 @@ export interface ProluofireImMessage {
   roomId?: string;
   threadId?: string;
   replyToId?: string;
+  userId?: string;
+  selfUid?: string;
   attachments?: ProluofireImAttachment[];
 }
 

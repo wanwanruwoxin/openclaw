@@ -410,11 +410,17 @@ function identifyMessageParticipants(params: {
 function isSelfMessage(params: {
   senderId: string;
   account: ResolvedProluofireImAccount;
+  message: ProluofireImMessage;
 }): boolean {
   const botUid = params.account.config.botUid
     ? normalizeProluofireImUserId(String(params.account.config.botUid))
     : "";
-  return Boolean(botUid && params.senderId === botUid);
+  const selfUid = params.message.selfUid
+    ? normalizeProluofireImUserId(String(params.message.selfUid))
+    : "";
+  return Boolean(
+    (botUid && params.senderId === botUid) || (selfUid && params.senderId === selfUid),
+  );
 }
 
 async function resolveMessagePolicies(params: {
@@ -562,7 +568,7 @@ async function handleIncomingMessage(params: {
 
   const identity = identifyMessageParticipants({ message, decoded, account });
 
-  if (isSelfMessage({ senderId: identity.senderId, account })) {
+  if (isSelfMessage({ senderId: identity.senderId, account, message })) {
     runtime.log(`[proluofire-im] drop self message senderId=${identity.senderId}`);
     return;
   }

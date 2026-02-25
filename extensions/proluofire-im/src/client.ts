@@ -245,6 +245,8 @@ function parseInboundMessage(payload: unknown): ProluofireImMessage | null {
     to: "", // Treat as DM to bot (empty string -> isGroup=false)
     content,
     roomId,
+    userId,
+    selfUid: currentUid,
     timestamp: parseTimestamp(messagePayload.createdAt, data.createdAt),
     replyToId: replyMessageId > 0 ? String(replyMessageId) : undefined,
   };
