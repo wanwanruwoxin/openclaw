@@ -1,8 +1,15 @@
 {
-  "name": "@openclaw/proluofire-im",
+  "name": "@proluofire/proluofire-im",
   "version": "2026.1.29",
-  "type": "module",
   "description": "OpenClaw proluofire-im channel plugin",
+  "type": "module",
+  "dependencies": {
+    "ws": "^8.19.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
@@ -18,16 +25,9 @@
       "quickstartAllowFrom": true
     },
     "install": {
-      "npmSpec": "@openclaw/proluofire-im",
+      "npmSpec": "@proluofire/proluofire-im",
       "localPath": "extensions/proluofire-im",
       "defaultChoice": "npm"
     }
-  },
-  "dependencies": {
-    "ws": "^8.19.0",
-    "zod": "^4.3.6"
-  },
-  "devDependencies": {
-    "openclaw": "workspace:*"
   }
 }
