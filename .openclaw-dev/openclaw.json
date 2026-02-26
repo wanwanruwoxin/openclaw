@@ -54,7 +54,7 @@
       },
       "groupPolicy": "allowlist",
       "groups": {
-        "#general": {
+        "*": {
           "users": ["*"],
           "requireMention": true
         }
