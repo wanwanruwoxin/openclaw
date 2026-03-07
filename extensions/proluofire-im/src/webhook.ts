@@ -15,6 +15,78 @@ import { normalizeTarget } from "./protocol.js";
 // 存储客户端实例，用于触发消息处理
 const clientInstances = new Map<string, ProluofireImClientInternal>();
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function readString(source: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function readInteger(source: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number.parseInt(value, 10);
+      if (Number.isFinite(parsed)) return Math.trunc(parsed);
+    }
+  }
+  return undefined;
+}
+
+function parseMediaAttachments(params: {
+  messageData: Record<string, unknown>;
+  content: string;
+  messageId: string;
+}): ProluofireImMessage["attachments"] {
+  const { messageData, content, messageId } = params;
+  const payload = content.trim().startsWith("{")
+    ? (() => {
+        try {
+          const parsed = JSON.parse(content) as unknown;
+          return isRecord(parsed) ? parsed : {};
+        } catch {
+          return {};
+        }
+      })()
+    : {};
+
+  const fileUrl =
+    readString(messageData, ["file_url", "fileUrl"]) ||
+    readString(payload, ["file_url", "fileUrl"]) ||
+    readString(messageData, ["thumbnail_url", "thumbnailUrl"]) ||
+    readString(payload, ["thumbnail_url", "thumbnailUrl"]);
+  if (!fileUrl) return [];
+
+  const fileName =
+    readString(messageData, ["file_name", "fileName"]) ||
+    readString(payload, ["file_name", "fileName"]);
+  const fileSize =
+    readInteger(messageData, ["file_size", "fileSize"]) ??
+    readInteger(payload, ["file_size", "fileSize"]);
+  const contentType = readString(messageData, ["contentType", "content_type"]).toLowerCase();
+  let type = "file";
+  if (contentType === "image" || contentType === "2") type = "image";
+  else if (contentType === "video" || contentType === "4") type = "video";
+  else if (contentType === "voice" || contentType === "audio" || contentType === "3")
+    type = "audio";
+
+  return [
+    {
+      id: `${messageId}:0`,
+      type,
+      url: fileUrl,
+      filename: fileName || undefined,
+      size: typeof fileSize === "number" && fileSize > 0 ? fileSize : undefined,
+    },
+  ];
+}
+
 /**
  * 注册客户端实例供 webhook 使用
  */
@@ -133,11 +205,16 @@ export async function handleWebhookRequest(params: {
           : typeof messageData.text === "string"
             ? messageData.text
             : "";
+      const normalizedMessageId = rawId ? String(rawId) : String(Date.now());
       const attachments = Array.isArray(messageData.attachments)
         ? (messageData.attachments as ProluofireImMessage["attachments"])
-        : [];
+        : parseMediaAttachments({
+            messageData,
+            content,
+            messageId: normalizedMessageId,
+          });
       const message: ProluofireImMessage = {
-        id: rawId ? String(rawId) : String(Date.now()),
+        id: normalizedMessageId,
         from,
         to,
         content,

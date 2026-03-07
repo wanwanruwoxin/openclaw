@@ -5,9 +5,12 @@ import type {
   ProluofireImClient,
   ProluofireImClientInternal,
   ConnectionStatus,
+  ProluofireImAttachment,
+  ProluofireImContentType,
   ProluofireImMessage,
 } from "./types.js";
 import { resolveProluofireImAccount } from "./accounts.js";
+import { PROLUOFIRE_IM_CONTENT_TYPE } from "./types.js";
 
 const WS_RECONNECT_BASE_MS = 1000;
 const WS_RECONNECT_MAX_MS = 15000;
@@ -54,12 +57,6 @@ function resolveRoomIdFromTarget(target: string): string {
   return normalized;
 }
 
-function coerceRoomId(value: string): number | string {
-  const parsed = Number.parseInt(value, 10);
-  if (Number.isSafeInteger(parsed) && String(parsed) === value) return parsed;
-  return value;
-}
-
 function buildLocalId(): string {
   const base = Date.now().toString();
   const suffix = Math.floor(Math.random() * 1000)
@@ -81,9 +78,125 @@ function parseReplyMessageId(value: unknown): number {
   return 0;
 }
 
+function readString(source: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function readInteger(source: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return Math.trunc(value);
+    }
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number.parseInt(value, 10);
+      if (Number.isFinite(parsed)) return Math.trunc(parsed);
+    }
+  }
+  return undefined;
+}
+
+function parseContentType(value: unknown): ProluofireImContentType | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const normalized = Math.trunc(value);
+    if (
+      normalized === PROLUOFIRE_IM_CONTENT_TYPE.Text ||
+      normalized === PROLUOFIRE_IM_CONTENT_TYPE.Image ||
+      normalized === PROLUOFIRE_IM_CONTENT_TYPE.Voice ||
+      normalized === PROLUOFIRE_IM_CONTENT_TYPE.Video ||
+      normalized === PROLUOFIRE_IM_CONTENT_TYPE.File
+    ) {
+      return normalized as ProluofireImContentType;
+    }
+    return null;
+  }
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "1" || normalized === "text") return PROLUOFIRE_IM_CONTENT_TYPE.Text;
+  if (normalized === "2" || normalized === "image") return PROLUOFIRE_IM_CONTENT_TYPE.Image;
+  if (normalized === "3" || normalized === "voice" || normalized === "audio") {
+    return PROLUOFIRE_IM_CONTENT_TYPE.Voice;
+  }
+  if (normalized === "4" || normalized === "video") return PROLUOFIRE_IM_CONTENT_TYPE.Video;
+  if (normalized === "5" || normalized === "file") return PROLUOFIRE_IM_CONTENT_TYPE.File;
+  return null;
+}
+
+function resolveAttachmentType(contentType: ProluofireImContentType | null): string {
+  if (contentType === PROLUOFIRE_IM_CONTENT_TYPE.Image) return "image";
+  if (contentType === PROLUOFIRE_IM_CONTENT_TYPE.Voice) return "audio";
+  if (contentType === PROLUOFIRE_IM_CONTENT_TYPE.Video) return "video";
+  return "file";
+}
+
+function resolveMediaPlaceholder(contentType: ProluofireImContentType | null): string {
+  if (contentType === PROLUOFIRE_IM_CONTENT_TYPE.Image) return "<media:image>";
+  if (contentType === PROLUOFIRE_IM_CONTENT_TYPE.Voice) return "<media:audio>";
+  if (contentType === PROLUOFIRE_IM_CONTENT_TYPE.Video) return "<media:video>";
+  if (contentType === PROLUOFIRE_IM_CONTENT_TYPE.File) return "<media:file>";
+  return "";
+}
+
+function parseContentRecord(rawContent: string): Record<string, unknown> | null {
+  const trimmed = rawContent.trim();
+  if (!trimmed || !trimmed.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildMediaAttachments(params: {
+  messagePayload: Record<string, unknown>;
+  contentRecord: Record<string, unknown> | null;
+  contentType: ProluofireImContentType | null;
+  messageId: string;
+}): ProluofireImAttachment[] {
+  const { messagePayload, contentRecord, contentType, messageId } = params;
+  const source = contentRecord ?? {};
+  const fileUrl =
+    readString(messagePayload, ["file_url", "fileUrl"]) ||
+    readString(source, ["file_url", "fileUrl"]) ||
+    readString(messagePayload, ["thumbnail_url", "thumbnailUrl"]) ||
+    readString(source, ["thumbnail_url", "thumbnailUrl"]);
+  if (!fileUrl) return [];
+
+  const fileName =
+    readString(messagePayload, ["file_name", "fileName"]) ||
+    readString(source, ["file_name", "fileName"]);
+  const fileSize =
+    readInteger(messagePayload, ["file_size", "fileSize"]) ??
+    readInteger(source, ["file_size", "fileSize"]);
+
+  return [
+    {
+      id: messageId ? `${messageId}:0` : `media_${Date.now()}`,
+      type: resolveAttachmentType(contentType),
+      url: fileUrl,
+      filename: fileName || undefined,
+      size: typeof fileSize === "number" && fileSize > 0 ? fileSize : undefined,
+    },
+  ];
+}
+
 function parseTimestamp(value: unknown, fallback?: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value > 1_000_000_000_000) return Math.trunc(value);
+    if (value > 1_000_000_000) return Math.trunc(value * 1000);
+  }
+  if (typeof fallback === "number" && Number.isFinite(fallback)) {
+    if (fallback > 1_000_000_000_000) return Math.trunc(fallback);
+    if (fallback > 1_000_000_000) return Math.trunc(fallback * 1000);
+  }
   const raw = typeof value === "string" ? value : typeof fallback === "string" ? fallback : "";
-  if (raw) {
+  if (raw.trim()) {
     const parsed = Date.parse(raw);
     if (Number.isFinite(parsed)) return parsed;
   }
@@ -93,161 +206,86 @@ function parseTimestamp(value: unknown, fallback?: unknown): number {
 function parseInboundMessage(payload: unknown): ProluofireImMessage | null {
   if (!isRecord(payload)) return null;
 
-  // Try to find the inner data/payload
-  const data = isRecord(payload.data) ? payload.data : payload;
-  if (!data) return null;
-  const messagePayload = isRecord(data.payload) ? data.payload : data;
-  if (!messagePayload) return null;
+  const envelope = isRecord(payload.data) ? payload.data : payload;
+  const messagePayload = isRecord(envelope.payload)
+    ? envelope.payload
+    : isRecord(payload.payload)
+      ? payload.payload
+      : envelope;
+  if (!isRecord(messagePayload)) return null;
 
-  // Check event type from either root or data
-  const rootEventType = typeof payload.eventType === "string" ? payload.eventType : "";
-  const eventType = typeof data.eventType === "string" ? data.eventType : rootEventType;
-
-  // If we have an event type, it MUST be ImMessageEvent.
-  // If no event type is found, we'll try to parse anyway if it looks like a message.
+  const eventType = readString(envelope, ["eventType"]) || readString(payload, ["eventType"]);
   if (eventType && eventType !== "ImMessageEvent") return null;
 
-  const contentTypeRaw = messagePayload.contentType;
-  const contentType =
-    typeof contentTypeRaw === "string"
-      ? contentTypeRaw
-      : typeof contentTypeRaw === "number"
-        ? String(contentTypeRaw)
-        : "";
-  if (contentType && contentType.toLowerCase() !== "text" && contentType !== "1") {
-    return null;
+  const messageTypeRaw =
+    readString(messagePayload, ["messageType", "message_type"]) ||
+    normalizeId(messagePayload.messageType ?? messagePayload.message_type);
+  if (messageTypeRaw) {
+    const normalizedMessageType = messageTypeRaw.toLowerCase();
+    if (normalizedMessageType !== "user" && normalizedMessageType !== "1") {
+      return null;
+    }
   }
 
-  const messageTypeRaw = messagePayload.messageType;
-  const messageType = typeof messageTypeRaw === "string" ? messageTypeRaw : "";
-  if (messageType && messageType.toLowerCase() !== "user") return null;
+  if (messagePayload.isWithdraw === true || messagePayload.is_withdraw === true) return null;
 
-  if (messagePayload.isWithdraw === true) return null;
-
-  const content = typeof messagePayload.content === "string" ? messagePayload.content : "";
-  if (!content.trim()) return null;
-
-  const roomId = normalizeId(messagePayload.roomId);
-  const rawUserId = normalizeId(messagePayload.userId);
-  const currentUid = normalizeId(data.uid);
+  const contentType = parseContentType(messagePayload.contentType ?? messagePayload.content_type);
+  const roomId = normalizeId(messagePayload.roomId ?? messagePayload.room_id);
+  const rawUserId = normalizeId(
+    messagePayload.userId ??
+      messagePayload.user_id ??
+      messagePayload.fromUid ??
+      messagePayload.from_uid,
+  );
+  const currentUid = normalizeId(envelope.uid ?? payload.uid);
   const userId = rawUserId || currentUid;
   if (!roomId || !userId) return null;
 
   const messageId =
     normalizeId(messagePayload.id) ||
-    normalizeId(messagePayload.messageId) ||
-    normalizeId(data.refId);
-  const replyMessageId = parseReplyMessageId(messagePayload.replyMessageId);
+    normalizeId(messagePayload.messageId ?? messagePayload.message_id) ||
+    normalizeId(envelope.refId ?? envelope.ref_id);
+  const replyMessageId = parseReplyMessageId(
+    messagePayload.replyMessageId ?? messagePayload.reply_message_id,
+  );
 
-  // If roomId is present, we assume it's a group message if the protocol implies it.
-  // However, for 1-on-1 chats, some systems still use "roomId" to denote the conversation ID.
-  // We need a way to distinguish.
-  // Looking at the logs: "messageType":"User" usually implies user message.
-  // If it's a DM, "roomId" might be the conversation ID, but we should treat it as DM
-  // if we can't be sure it's a group.
+  const rawContent = typeof messagePayload.content === "string" ? messagePayload.content : "";
+  const contentRecord = parseContentRecord(rawContent);
+  const attachments = buildMediaAttachments({
+    messagePayload,
+    contentRecord,
+    contentType,
+    messageId: messageId || `ws_${Date.now()}`,
+  });
+  const mediaPlaceholder = resolveMediaPlaceholder(contentType);
+  const content =
+    contentType === PROLUOFIRE_IM_CONTENT_TYPE.Text
+      ? rawContent
+      : rawContent.trim() && !contentRecord
+        ? rawContent
+        : mediaPlaceholder || (attachments.length > 0 ? "<media:file>" : "");
+  if (!content.trim() && attachments.length === 0) return null;
 
-  // FIXME: Currently we force everything to be group if roomId is present.
-  // If your system uses roomId for DMs too, we need a flag (e.g. chatType).
-  // Assuming for now: if messageType is "User", it MIGHT be a DM?
-  // But wait, group messages are also from "User".
-
-  // Let's check if there is a specific field for chat type.
-  // The log shows: "messageType":"User".
-
-  // Temporary Fix: You said it's a DM.
-  // If roomId exists, is it a Group ID or just a Conversation ID?
-  // If it's a DM, `to` should be the bot's user ID, not `group:roomId`.
-
-  // Since we don't have enough info from the payload to distinguish Group vs DM purely by fields
-  // (unless messageType "Group" exists?), we might need to rely on other hints.
-  // But for now, if you say it's DM, we should probably output `user:${roomId}` or similar?
-  // Actually, if it's a DM, the `to` should be the receiver (the bot).
-  // But `monitor.ts` uses `to` to determine `isGroup`.
-
-  // Let's try to infer from payload. If there is no explicit "Group" type...
-  // Maybe we can check if `roomId` equals `userId` (self chat) or something? No.
-
-  // CRITICAL CHANGE: We will change the default assumption.
-  // If `messagePayload.chatType` exists, use it.
-  // Otherwise, we default to DM if `roomId` looks like a User ID? No, that's risky.
-
-  // Let's assume for this specific integration:
-  // If the user says it's DM but we see roomId=14...
-  // Maybe `roomId` IS the group/channel ID even for DMs in this system?
-  // But OpenClaw treats `group:...` as Multi-User Chat.
-
-  // Let's try to map it to DM for now if the user insists.
-  // But wait, if we map it to DM, we need to know who it is sent TO.
-  // In a DM, `to` is the bot. `from` is the sender.
-  // The current code sets `to: group:roomId`.
-
-  // If I change it to `to: user:BOT_ID`, then `monitor.ts` will treat it as DM.
-  // But we don't know the BOT_ID here easily without config.
-
-  // ALTERNATIVE: Just assume it is a DM if the user says so,
-  // but how to distinguish from Group programmatically?
-  // Maybe `roomId` is 0 for DMs? In the log roomId is 14.
-
-  // Let's look at the log again:
-  // "payload": { ... "roomId": 14, "userId": 6 ... }
-
-  // If 14 is a Group, then `group:14` is correct.
-  // If 14 is a Conversation ID for a DM between User 6 and Bot...
-  // OpenClaw expects DMs to have `to` as the Bot's ID (or empty/undefined).
-
-  // HYPOTHESIS: This IM system uses `roomId` for both.
-  // We need to know if Room 14 is a Group or DM.
-  // Since we can't know, maybe we can look at `messageType`.
-  // Log says `messageType: "User"`. Maybe Group messages have `messageType: "Group"`?
-  // If so, then "User" implies DM?
-
-  // Let's try this heuristic:
-  // If messageType is "User", treat as DM?
-  // But group messages are also sent BY users.
-
-  // Let's try to see if there is `chatType` field.
-  // Log doesn't show `chatType`.
-
-  // OK, let's try this:
-  // If it's a DM, we set `to` to undefined (or the bot ID if we knew it).
-  // If we set `to: undefined`, OpenClaw treats it as DM sent to the bot.
-
-  // Modified logic:
-  // We will assume it is a DM if `roomId` is present but we want to treat it as DM.
-  // But wait, if it IS a group, we break group chat.
-
-  // Let's assume for now that `messageType` === 'User' means DM,
-  // and maybe 'Group' (or 'Room'?) means Group?
-  // I will check if I can find `chatType` in the raw payload.
-  // The log shows: "eventType":"ImMessageEvent", "payload":{..."messageType":"User"...}
-
-  // I will blindly trust the user that THIS message is a DM.
-  // So I will change the logic to:
-  // to: `dm:${roomId}` ? No.
-
-  // Let's just remove the `group:` prefix and let `monitor.ts` decide?
-  // `monitor.ts`: const isGroup = Boolean(toTarget && toTarget.startsWith("#"));
-  // `protocol.ts` adds `#` if it sees `group:`.
-
-  // I'll modify `parseInboundMessage` to NOT add `group:` prefix by default,
-  // OR try to detect DM.
-
-  // For now, I will use a heuristic:
-  // If `roomId` is small (like 14), it might be a group? Or DM?
-  // Actually, usually DM `roomId`s are complex or just 0.
-
-  // Let's try to assume it is a DM for now to unblock the user.
-  // I will set `to` to `undefined` (which implies DM to bot).
+  const envelopeType = readString(payload, ["messageType", "message_type"]);
+  const roomType = readString(messagePayload, ["roomType", "room_type", "chatType", "chat_type"]);
+  const forceGroup =
+    envelopeType.toLowerCase() === "imgroupeventinbox" ||
+    /group|room|channel/.test(roomType.toLowerCase());
+  const to = forceGroup ? `#${roomId}` : "";
 
   return {
     id: messageId || `ws_${Date.now()}`,
     from: `user:${userId}`,
-    to: "", // Treat as DM to bot (empty string -> isGroup=false)
+    to,
     content,
+    attachments,
     roomId,
     userId,
     selfUid: currentUid,
-    timestamp: parseTimestamp(messagePayload.createdAt, data.createdAt),
+    timestamp: parseTimestamp(
+      messagePayload.createdAt ?? messagePayload.created_at,
+      envelope.createdAt ?? envelope.created_at,
+    ),
     replyToId: replyMessageId > 0 ? String(replyMessageId) : undefined,
   };
 }
@@ -502,20 +540,21 @@ export async function createProluofireImClient(params: {
         throw new Error("Client not connected");
       }
 
-      if (options?.attachments && options.attachments.length > 0) {
-        throw new Error("Proluofire IM media sends are not supported yet");
-      }
-
       try {
         const roomId = resolveRoomIdFromTarget(target);
         const replyMessageId = parseReplyMessageId(options?.replyToId);
         const localId = options?.localId?.trim() || buildLocalId();
         const numericRoomId = /^\d+$/.test(roomId) ? roomId : "";
+        const contentType = options?.contentType ?? PROLUOFIRE_IM_CONTENT_TYPE.Text;
+        const messageContent = content ?? "";
+        if (!messageContent.trim() && contentType === PROLUOFIRE_IM_CONTENT_TYPE.Text) {
+          throw new Error("Message content is required");
+        }
         const requestBody = {
           room_id: numericRoomId ? `__room_id__${numericRoomId}__` : roomId,
           local_id: localId,
-          content_type: 1,
-          content,
+          content_type: contentType,
+          content: messageContent,
           reply_message_id: replyMessageId,
         };
         let body = JSON.stringify(requestBody);
@@ -536,10 +575,12 @@ export async function createProluofireImClient(params: {
           body,
         });
         const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+        const dataPayload = isRecord(payload.data) ? payload.data : {};
         const messageId =
+          normalizeId(dataPayload.id) ||
+          normalizeId(dataPayload.messageId) ||
           normalizeId(payload.messageId) ||
           normalizeId(payload.id) ||
-          normalizeId(payload.data) ||
           localId;
         return messageId;
       } catch (error) {

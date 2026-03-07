@@ -93,7 +93,22 @@ export interface ProluofireImAttachment {
   filename?: string;
   size?: number;
   mimeType?: string;
+  thumbnailUrl?: string;
+  width?: number;
+  height?: number;
+  duration?: number;
 }
+
+export const PROLUOFIRE_IM_CONTENT_TYPE = {
+  Text: 1,
+  Image: 2,
+  Voice: 3,
+  Video: 4,
+  File: 5,
+} as const;
+
+export type ProluofireImContentType =
+  (typeof PROLUOFIRE_IM_CONTENT_TYPE)[keyof typeof PROLUOFIRE_IM_CONTENT_TYPE];
 
 // Client types
 export interface ProluofireImClient {
@@ -107,7 +122,7 @@ export interface ProluofireImClient {
 export interface SendMessageOptions {
   threadId?: string;
   replyToId?: string;
-  attachments?: ProluofireImAttachment[];
+  contentType?: ProluofireImContentType;
   localId?: string;
 }
 

@@ -1,14 +1,27 @@
+import { Buffer } from "node:buffer";
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk";
-
+import type {
+  CoreConfig,
+  ProluofireImAttachment,
+  ProluofireImClient,
+  ProluofireImContentType,
+  SendMessageOptions,
+} from "./types.js";
 import { createProluofireImClient, resolveProluofireImAuth } from "./client.js";
+import { uploadMedia } from "./media.js";
 import {
   convertMarkdownToProluofireIm,
   convertMentionsToProluofireIm,
   encodeMessage,
   normalizeTarget,
 } from "./protocol.js";
-import { getClientForAccount, getProluofireImRuntime, markOutboundMessage } from "./runtime.js";
-import type { CoreConfig, ProluofireImClient, SendMessageOptions } from "./types.js";
+import {
+  getClientForAccount,
+  getProluofireImRuntime,
+  markOutboundMessage,
+  resolveDirectRoomForTarget,
+} from "./runtime.js";
+import { PROLUOFIRE_IM_CONTENT_TYPE } from "./types.js";
 
 // Rate limiting state
 const rateLimitState = new Map<string, { count: number; resetAt: number }>();
@@ -25,6 +38,39 @@ type ProluofireImSendResult = {
   messageId: string;
   to: string;
 };
+
+function resolveOutboundTarget(params: { target: string; accountId: string }): {
+  normalizedTarget: string;
+  resolvedTarget: string;
+  mappedDirectRoom: string | null;
+} {
+  const normalizedTarget = normalizeTarget(params.target);
+  if (!normalizedTarget) {
+    throw new Error("Target cannot be empty");
+  }
+  const mappedDirectRoom =
+    resolveDirectRoomForTarget({
+      accountId: params.accountId,
+      target: params.target,
+    }) ??
+    (normalizedTarget.startsWith("@")
+      ? resolveDirectRoomForTarget({
+          accountId: params.accountId,
+          target: normalizedTarget,
+        })
+      : null);
+  const resolvedTarget = mappedDirectRoom ? `#${mappedDirectRoom}` : normalizedTarget;
+  return { normalizedTarget, resolvedTarget, mappedDirectRoom };
+}
+
+function resolveRoomIdHintForTarget(params: {
+  target: string;
+  accountId: string;
+}): string | undefined {
+  const { resolvedTarget } = resolveOutboundTarget(params);
+  const roomCandidate = resolvedTarget.replace(/^#/, "").trim();
+  return /^\d+$/.test(roomCandidate) ? roomCandidate : undefined;
+}
 
 async function resolveClientForSend(params: {
   cfg: CoreConfig;
@@ -66,18 +112,19 @@ export async function sendMessageProluofireIm(
 ): Promise<ProluofireImSendResult> {
   try {
     const runtime = getProluofireImRuntime();
-    const cfg =
-      options?.cfg ?? (runtime.config.loadConfig() as CoreConfig);
+    const cfg = options?.cfg ?? (runtime.config.loadConfig() as CoreConfig);
     const accountId = options?.accountId ?? DEFAULT_ACCOUNT_ID;
 
-    // Normalize target
-    const normalizedTarget = normalizeTarget(target);
-    if (!normalizedTarget) {
-      throw new Error("Target cannot be empty");
+    const { resolvedTarget, mappedDirectRoom } = resolveOutboundTarget({
+      target,
+      accountId,
+    });
+    if (mappedDirectRoom) {
+      console.log(`[proluofire-im] resolved direct target ${target} -> room ${mappedDirectRoom}`);
     }
 
     // Check rate limit
-    await checkRateLimit(normalizedTarget);
+    await checkRateLimit(resolvedTarget);
 
     // Encode and format message
     const tableMode = runtime.channel.text.resolveMarkdownTableMode({
@@ -85,13 +132,13 @@ export async function sendMessageProluofireIm(
       channel: "proluofire-im",
       accountId,
     });
-    const normalizedContent = runtime.channel.text.convertMarkdownTables(
-      content ?? "",
-      tableMode,
-    );
+    const normalizedContent = runtime.channel.text.convertMarkdownTables(content ?? "", tableMode);
     const encodedContent = encodeMessage(normalizedContent);
     const formattedContent = convertMarkdownToProluofireIm(encodedContent);
-    const finalContent = convertMentionsToProluofireIm(formattedContent);
+    const finalTextContent = convertMentionsToProluofireIm(formattedContent);
+    const contentType = options?.contentType ?? PROLUOFIRE_IM_CONTENT_TYPE.Text;
+    const finalContent =
+      contentType === PROLUOFIRE_IM_CONTENT_TYPE.Text ? finalTextContent : (content ?? "");
 
     const { client, release } = await resolveClientForSend({
       cfg,
@@ -100,20 +147,20 @@ export async function sendMessageProluofireIm(
     });
     let messageId = "";
     try {
-      messageId = await client.sendMessage(normalizedTarget, finalContent, options);
+      messageId = await client.sendMessage(resolvedTarget, finalContent, options);
     } finally {
       await release();
     }
 
     // Update rate limit
-    updateRateLimit(normalizedTarget);
+    updateRateLimit(resolvedTarget);
 
     // Mark outbound message (for status tracking)
     markOutboundMessage(accountId);
 
     return {
       messageId: messageId || `${Date.now()}`,
-      to: normalizedTarget,
+      to: resolvedTarget,
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
@@ -201,6 +248,171 @@ function updateRateLimit(target: string): void {
   }
 }
 
+function resolveMediaMaxSizeMb(cfg: CoreConfig, accountId: string): number {
+  const channelCfg = cfg.channels?.["proluofire-im"];
+  const accountCfg = channelCfg?.accounts?.[accountId];
+  const raw =
+    typeof accountCfg?.mediaMaxMb === "number"
+      ? accountCfg.mediaMaxMb
+      : typeof channelCfg?.mediaMaxMb === "number"
+        ? channelCfg.mediaMaxMb
+        : 50;
+  if (!Number.isFinite(raw)) {
+    return 50;
+  }
+  return Math.max(1, raw);
+}
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".svg": "image/svg+xml",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".avi": "video/x-msvideo",
+  ".mkv": "video/x-matroska",
+  ".webm": "video/webm",
+};
+
+function normalizePositiveInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const normalized = Math.trunc(value);
+  return normalized > 0 ? normalized : undefined;
+}
+
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value.trim());
+}
+
+function resolveExtensionFromPathOrUrl(source: string): string {
+  const trimmed = source.trim();
+  if (!trimmed) return "";
+  try {
+    const url = new URL(trimmed);
+    const pathname = url.pathname || "";
+    const index = pathname.lastIndexOf(".");
+    if (index < 0) return "";
+    return pathname.slice(index).toLowerCase();
+  } catch {
+    const normalized = trimmed.replace(/[?#].*$/, "");
+    const index = normalized.lastIndexOf(".");
+    if (index < 0) return "";
+    return normalized.slice(index).toLowerCase();
+  }
+}
+
+function resolveMimeTypeHint(source: string, explicitMimeType?: string): string {
+  const hinted = explicitMimeType?.trim().toLowerCase();
+  if (hinted) return hinted;
+  const ext = resolveExtensionFromPathOrUrl(source);
+  return MIME_BY_EXTENSION[ext] || "application/octet-stream";
+}
+
+function inferFilenameFromPathOrUrl(source: string): string | undefined {
+  const trimmed = source.trim();
+  if (!trimmed) return undefined;
+  try {
+    const url = new URL(trimmed);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const last = segments.at(-1);
+    return last ? decodeURIComponent(last) : undefined;
+  } catch {
+    const normalized = trimmed.replace(/^file:\/\//i, "").replace(/[?#].*$/, "");
+    const segments = normalized.split("/").filter(Boolean);
+    return segments.at(-1);
+  }
+}
+
+function resolveMediaContentTypeFromSource(source: string): ProluofireImContentType | null {
+  const ext = resolveExtensionFromPathOrUrl(source);
+  if (!ext) return null;
+  const mimeType = MIME_BY_EXTENSION[ext] || "";
+  if (mimeType.startsWith("image/")) return PROLUOFIRE_IM_CONTENT_TYPE.Image;
+  if (mimeType.startsWith("audio/")) return PROLUOFIRE_IM_CONTENT_TYPE.Voice;
+  if (mimeType.startsWith("video/")) return PROLUOFIRE_IM_CONTENT_TYPE.Video;
+  return null;
+}
+
+function resolveMediaContentType(attachment: ProluofireImAttachment): ProluofireImContentType {
+  const mediaType = (attachment.mimeType || attachment.type || "").toLowerCase();
+  if (mediaType.startsWith("image/")) {
+    return PROLUOFIRE_IM_CONTENT_TYPE.Image;
+  }
+  if (mediaType.startsWith("audio/")) {
+    return PROLUOFIRE_IM_CONTENT_TYPE.Voice;
+  }
+  if (mediaType.startsWith("video/")) {
+    return PROLUOFIRE_IM_CONTENT_TYPE.Video;
+  }
+  const byFileName = attachment.filename
+    ? resolveMediaContentTypeFromSource(attachment.filename)
+    : null;
+  if (byFileName) {
+    return byFileName;
+  }
+  const byUrl = attachment.url ? resolveMediaContentTypeFromSource(attachment.url) : null;
+  if (byUrl) {
+    return byUrl;
+  }
+  return PROLUOFIRE_IM_CONTENT_TYPE.File;
+}
+
+function resolveMediaContentPayload(params: {
+  attachment: ProluofireImAttachment;
+  contentType: ProluofireImContentType;
+}): string {
+  const { attachment, contentType } = params;
+  const fileUrl = attachment.url?.trim();
+  if (!fileUrl) {
+    throw new Error("Uploaded media is missing file_url");
+  }
+
+  const payload: Record<string, string | number> = { file_url: fileUrl };
+  const fileName = attachment.filename?.trim();
+  if (fileName) {
+    payload.file_name = fileName;
+  }
+
+  if (contentType === PROLUOFIRE_IM_CONTENT_TYPE.Image) {
+    payload.thumbnail_url = attachment.thumbnailUrl?.trim() || fileUrl;
+    const width = normalizePositiveInteger(attachment.width);
+    const height = normalizePositiveInteger(attachment.height);
+    if (width) payload.width = width;
+    if (height) payload.height = height;
+  } else if (contentType === PROLUOFIRE_IM_CONTENT_TYPE.Video) {
+    payload.thumbnail_url = attachment.thumbnailUrl?.trim() || fileUrl;
+    const width = normalizePositiveInteger(attachment.width);
+    const height = normalizePositiveInteger(attachment.height);
+    const duration = normalizePositiveInteger(attachment.duration);
+    if (width) payload.width = width;
+    if (height) payload.height = height;
+    if (duration) payload.duration = duration;
+  } else if (contentType === PROLUOFIRE_IM_CONTENT_TYPE.Voice) {
+    const duration = normalizePositiveInteger(attachment.duration);
+    if (duration) payload.duration = duration;
+  } else if (contentType === PROLUOFIRE_IM_CONTENT_TYPE.File) {
+    const fileSize =
+      typeof attachment.size === "number" && Number.isFinite(attachment.size)
+        ? Math.max(0, Math.trunc(attachment.size))
+        : 0;
+    if (fileSize > 0) {
+      payload.file_size = fileSize;
+    }
+  }
+
+  return JSON.stringify(payload);
+}
+
 /**
  * Send message with retry logic
  *
@@ -231,7 +443,9 @@ export async function sendMessageWithRetry(
       // Wait before retry with exponential backoff
       if (attempt < maxRetries - 1) {
         const delayMs = Math.min(1000 * Math.pow(2, attempt), 10000);
-        console.log(`[proluofire-im] Retry attempt ${attempt + 1}/${maxRetries} in ${delayMs}ms...`);
+        console.log(
+          `[proluofire-im] Retry attempt ${attempt + 1}/${maxRetries} in ${delayMs}ms...`,
+        );
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
@@ -249,7 +463,11 @@ function isRetryableError(error: Error): boolean {
   const message = error.message.toLowerCase();
 
   // Network errors - retryable
-  if (message.includes("network") || message.includes("timeout") || message.includes("econnrefused")) {
+  if (
+    message.includes("network") ||
+    message.includes("timeout") ||
+    message.includes("econnrefused")
+  ) {
     return true;
   }
 
@@ -277,22 +495,115 @@ function isRetryableError(error: Error): boolean {
   return true;
 }
 
-/**
- * Send message with media attachments
- *
- * TODO: Implement media attachment handling
- * - Upload media files first (see media.ts)
- * - Include attachment references in message
- */
 export async function sendMessageWithMedia(
   target: string,
   content: string,
   attachments: Array<{ path: string; type: string }>,
   options?: ProluofireImSendOptions,
-): Promise<void> {
-  void target;
-  void content;
-  void attachments;
-  void options;
-  throw new Error("Proluofire IM media sends are not supported yet");
+): Promise<ProluofireImSendResult> {
+  if (!attachments.length) {
+    return sendMessageProluofireIm(target, content, options);
+  }
+
+  const runtime = getProluofireImRuntime();
+  const cfg = options?.cfg ?? (runtime.config.loadConfig() as CoreConfig);
+  const accountId = options?.accountId ?? DEFAULT_ACCOUNT_ID;
+  const maxSizeMb = resolveMediaMaxSizeMb(cfg, accountId);
+  const roomIdHint = resolveRoomIdHintForTarget({
+    target,
+    accountId,
+  });
+
+  const uploaded: ProluofireImAttachment[] = [];
+  for (const attachment of attachments) {
+    const mediaPath = attachment.path?.trim();
+    if (!mediaPath) {
+      continue;
+    }
+    if (isHttpUrl(mediaPath)) {
+      const hintedMimeType = resolveMimeTypeHint(mediaPath, attachment.type);
+      const remoteAttachment: ProluofireImAttachment = {
+        id: `remote_${Date.now()}_${uploaded.length}`,
+        type: hintedMimeType,
+        url: mediaPath,
+        filename: inferFilenameFromPathOrUrl(mediaPath),
+        mimeType: hintedMimeType,
+      };
+      try {
+        const loaded = await runtime.media.loadWebMedia(mediaPath, maxSizeMb * 1024 * 1024);
+        if (loaded.contentType?.trim()) {
+          remoteAttachment.type = loaded.contentType.trim();
+          remoteAttachment.mimeType = loaded.contentType.trim();
+        }
+        if (loaded.fileName?.trim()) {
+          remoteAttachment.filename = loaded.fileName.trim();
+        }
+        if (loaded.buffer.length > 0) {
+          remoteAttachment.size = loaded.buffer.length;
+        }
+        const resolvedType = resolveMediaContentType(remoteAttachment);
+        if (resolvedType === PROLUOFIRE_IM_CONTENT_TYPE.Image) {
+          const meta = await runtime.media
+            .getImageMetadata(Buffer.from(loaded.buffer))
+            .catch(() => null);
+          remoteAttachment.width = normalizePositiveInteger(meta?.width);
+          remoteAttachment.height = normalizePositiveInteger(meta?.height);
+        }
+      } catch {
+        // Best-effort metadata for remote URLs; sending direct file_url is still valid.
+      }
+      uploaded.push(remoteAttachment);
+      continue;
+    }
+
+    uploaded.push(
+      await uploadMedia({
+        cfg,
+        accountId,
+        filePath: mediaPath,
+        mimeType: attachment.type?.trim() || undefined,
+        maxSizeMb,
+        roomIdHint,
+      }),
+    );
+  }
+
+  if (!uploaded.length) {
+    throw new Error("No media attachments were uploaded");
+  }
+
+  const caption = content.trim();
+  let replyToId = options?.replyToId;
+
+  if (caption) {
+    await sendMessageProluofireIm(target, caption, {
+      ...options,
+      cfg,
+      accountId,
+    });
+    replyToId = undefined;
+  }
+
+  let lastResult: ProluofireImSendResult | null = null;
+  for (const uploadedAttachment of uploaded) {
+    const contentType = resolveMediaContentType(uploadedAttachment);
+    const mediaPayload = resolveMediaContentPayload({
+      attachment: uploadedAttachment,
+      contentType,
+    });
+    lastResult = await sendMessageProluofireIm(target, mediaPayload, {
+      ...options,
+      cfg,
+      accountId,
+      replyToId,
+      contentType,
+    });
+    replyToId = undefined;
+  }
+
+  if (!lastResult) {
+    throw new Error("No media message was sent");
+  }
+
+  return lastResult;
 }

@@ -130,7 +130,7 @@ export const proluofireImPlugin: ChannelPlugin<ResolvedProluofireImAccount> = {
     polls: false,
     reactions: false,
     threads: false,
-    media: false,
+    media: true,
   },
   reload: { configPrefixes: ["channels.proluofire-im"] },
   configSchema: buildChannelConfigSchema(ProluofireImConfigSchema),

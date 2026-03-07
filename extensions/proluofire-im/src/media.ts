@@ -1,25 +1,156 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
-
+import * as path from "node:path";
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk";
-
 import type { CoreConfig, ProluofireImAttachment } from "./types.js";
 import { resolveProluofireImAuth } from "./client.js";
 import { getProluofireImRuntime } from "./runtime.js";
 
 // Temporary file tracking for cleanup
 const tempFiles = new Set<string>();
+const QINIU_DEFAULT_UPLOAD_HOST = "https://upload.qiniup.com";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function normalizeBaseUrl(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed.replace(/\/+$/, "");
+  }
+  return `https://${trimmed.replace(/\/+$/, "")}`;
+}
+
+function resolveQiniuUploadHost(domain: string): string {
+  const normalized = normalizeBaseUrl(domain);
+  if (domain.includes("qiniup.com") || domain.includes("qbox.me")) {
+    return normalized || QINIU_DEFAULT_UPLOAD_HOST;
+  }
+  return QINIU_DEFAULT_UPLOAD_HOST;
+}
+
+function resolveResourceBaseUrl(domain: string): string | undefined {
+  if (domain.includes("qiniup.com") || domain.includes("qbox.me")) return undefined;
+  return normalizeBaseUrl(domain);
+}
+
+function buildResourceUrl(base: string | undefined, key: string): string {
+  const trimmedKey = key.trim().replace(/^\/+/, "");
+  if (!trimmedKey) return "";
+  if (/^https?:\/\//i.test(trimmedKey)) return trimmedKey;
+  if (!base) return trimmedKey;
+  return `${base}/${trimmedKey}`;
+}
+
+function normalizeDimension(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const normalized = Math.trunc(value);
+  return normalized > 0 ? normalized : undefined;
+}
+
+function normalizeQiniuSegment(value: string, fallback: string): string {
+  const normalized = value
+    .trim()
+    .replace(/^\.+/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || fallback;
+}
+
+function normalizeQiniuExtension(raw: string): string {
+  return normalizeQiniuSegment(raw, "bin");
+}
+
+function normalizeQiniuId(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return String(Math.trunc(value));
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^\d+$/.test(trimmed)) return trimmed;
+  }
+  return "0";
+}
+
+function buildStableObjectHashHex(bytes: Uint8Array): string {
+  // GPUI uses xxh3_128. Here we keep deterministic 32-hex output for the same key layout.
+  return createHash("sha256").update(bytes).digest("hex").slice(0, 32);
+}
+
+function extractUidFromJwtToken(token: string | undefined): string | undefined {
+  const trimmed = token?.trim();
+  if (!trimmed) return undefined;
+  const parts = trimmed.split(".");
+  if (parts.length < 2) return undefined;
+  try {
+    const payloadRaw = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = payloadRaw.padEnd(Math.ceil(payloadRaw.length / 4) * 4, "=");
+    const parsed = JSON.parse(Buffer.from(padded, "base64").toString("utf8")) as Record<
+      string,
+      unknown
+    >;
+    const uid = parsed.uid;
+    if (typeof uid === "number" && Number.isFinite(uid) && uid > 0) {
+      return String(Math.trunc(uid));
+    }
+    if (typeof uid === "string" && /^\d+$/.test(uid.trim())) {
+      return uid.trim();
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function buildUploadKey(params: {
+  fileName: string;
+  bytes: Uint8Array;
+  currentUserId?: string;
+  sessionId?: string;
+}): string {
+  const ext = path.extname(params.fileName).replace(/^\./, "");
+  const normalizedExt = normalizeQiniuExtension(ext);
+  const userSegment = normalizeQiniuId(params.currentUserId);
+  const sessionSegment = normalizeQiniuId(params.sessionId);
+  const hash = normalizeQiniuSegment(buildStableObjectHashHex(params.bytes), "unknown");
+  return `${userSegment}/${sessionSegment}/${normalizedExt}/${hash}.${normalizedExt}`;
+}
+
+async function fetchQiniuToken(params: {
+  baseUrl: string;
+  authHeader?: string;
+}): Promise<{ token: string; domain: string }> {
+  const response = await fetch(`${params.baseUrl}/api/users/qiniu/token`, {
+    method: "GET",
+    headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Failed to fetch qiniu token (${response.status}): ${detail || response.statusText}`,
+    );
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  const data = isRecord(payload.data) ? payload.data : payload;
+  const token = typeof data.token === "string" ? data.token.trim() : "";
+  const domain = typeof data.domain === "string" ? data.domain.trim() : "";
+  if (!token) {
+    throw new Error("Qiniu token is missing from /api/users/qiniu/token response");
+  }
+  if (!domain) {
+    throw new Error("Qiniu domain is missing from /api/users/qiniu/token response");
+  }
+  return { token, domain };
+}
 
 /**
- * Upload media file to proluofire-im
- *
- * TODO: Implement actual media upload using proluofire-im API
- * - Check proluofire-im's media upload endpoint
- * - Handle authentication for upload
- * - Use streaming for large files
- * - Return attachment reference
+ * Upload media to Qiniu using ProLuoFire token endpoint.
  */
 export async function uploadMedia(params: {
   cfg?: CoreConfig;
@@ -27,8 +158,9 @@ export async function uploadMedia(params: {
   filePath: string;
   mimeType?: string;
   maxSizeMb?: number;
+  roomIdHint?: string;
 }): Promise<ProluofireImAttachment> {
-  const { filePath, mimeType, maxSizeMb = 50 } = params;
+  const { filePath, mimeType, maxSizeMb = 50, roomIdHint } = params;
 
   try {
     const runtime = getProluofireImRuntime();
@@ -36,61 +168,86 @@ export async function uploadMedia(params: {
     const accountId = params.accountId ?? DEFAULT_ACCOUNT_ID;
     const auth = await resolveProluofireImAuth({ cfg, accountId });
     const baseUrl = auth.serverUrl.trim().replace(/\/+$/, "");
-    const uploadUrl = `${baseUrl}/api/v1/media/upload`;
 
     const maxBytes = Math.max(1, maxSizeMb) * 1024 * 1024;
     const loaded = await runtime.media.loadWebMedia(filePath, maxBytes);
     const overrideMime = mimeType?.trim();
-    const detectedMimeType =
-      overrideMime || loaded.contentType || (await detectMimeType(filePath));
+    const detectedMimeType = overrideMime || loaded.contentType || (await detectMimeType(filePath));
 
-    // Validate media type
     validateMediaType(detectedMimeType);
+
+    let width: number | undefined;
+    let height: number | undefined;
+    if (detectedMimeType.toLowerCase().startsWith("image/")) {
+      const metadata = await runtime.media
+        .getImageMetadata(Buffer.from(loaded.buffer))
+        .catch(() => null);
+      width = normalizeDimension(metadata?.width);
+      height = normalizeDimension(metadata?.height);
+    }
 
     const authHeader = buildAuthHeader({
       apiKey: auth.apiKey,
       username: auth.username,
       password: auth.password,
     });
+    const qiniu = await fetchQiniuToken({
+      baseUrl,
+      authHeader,
+    });
+    const uploadHost = resolveQiniuUploadHost(qiniu.domain);
+    const resourceBaseUrl = resolveResourceBaseUrl(qiniu.domain);
 
     const form = new FormData();
     const bytes = Uint8Array.from(loaded.buffer);
-    const blob = detectedMimeType ? new Blob([bytes], { type: detectedMimeType }) : new Blob([bytes]);
+    const blob = detectedMimeType
+      ? new Blob([bytes], { type: detectedMimeType })
+      : new Blob([bytes]);
     const fileName = loaded.fileName || path.basename(filePath) || "upload";
-    form.append(
-      "file",
-      blob,
+    const currentUserId = extractUidFromJwtToken(auth.apiKey);
+    const uploadKey = buildUploadKey({
       fileName,
-    );
+      bytes,
+      currentUserId,
+      sessionId: roomIdHint,
+    });
+    form.append("token", qiniu.token);
+    form.append("key", uploadKey);
+    form.append("file", blob, fileName);
 
-    const response = await fetch(uploadUrl, {
+    const response = await fetch(uploadHost, {
       method: "POST",
-      headers: authHeader ? { Authorization: authHeader } : undefined,
       body: form,
     });
 
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
-      throw new Error(
-        `Upload failed (${response.status}): ${detail || response.statusText}`,
-      );
+      throw new Error(`Upload failed (${response.status}): ${detail || response.statusText}`);
     }
 
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const key =
+      (typeof payload.key === "string" && payload.key.trim()) ||
+      (typeof payload.file_key === "string" && payload.file_key.trim()) ||
+      uploadKey;
     const id =
       typeof payload.id === "string"
         ? payload.id
-        : typeof payload.messageId === "string"
-          ? payload.messageId
-          : typeof payload.attachmentId === "string"
-            ? payload.attachmentId
-            : `media_${Date.now()}`;
+        : typeof payload.file_id === "string"
+          ? payload.file_id
+          : typeof payload.messageId === "string"
+            ? payload.messageId
+            : typeof payload.attachmentId === "string"
+              ? payload.attachmentId
+              : key || `media_${Date.now()}`;
     const url =
       (typeof payload.url === "string" && payload.url) ||
       (typeof payload.downloadUrl === "string" && payload.downloadUrl) ||
       (typeof payload.href === "string" && payload.href) ||
-      response.headers.get("location") ||
-      "";
+      buildResourceUrl(resourceBaseUrl, key);
+    if (!url) {
+      throw new Error("Qiniu upload succeeded but no file URL could be resolved");
+    }
 
     return {
       id,
@@ -98,8 +255,9 @@ export async function uploadMedia(params: {
       url,
       filename: (typeof payload.filename === "string" && payload.filename) || fileName,
       size: typeof payload.size === "number" ? payload.size : loaded.buffer.length,
-      mimeType:
-        (typeof payload.mimeType === "string" && payload.mimeType) || detectedMimeType,
+      mimeType: (typeof payload.mimeType === "string" && payload.mimeType) || detectedMimeType,
+      width,
+      height,
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
@@ -157,9 +315,7 @@ export async function downloadMedia(params: {
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
-      throw new Error(
-        `Download failed (${response.status}): ${detail || response.statusText}`,
-      );
+      throw new Error(`Download failed (${response.status}): ${detail || response.statusText}`);
     }
 
     const buffer = Buffer.from(await response.arrayBuffer());

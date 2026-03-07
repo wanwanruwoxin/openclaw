@@ -1,5 +1,4 @@
 import type { PluginRuntime } from "openclaw/plugin-sdk";
-
 import type { ProluofireImClient } from "./types.js";
 
 let runtime: PluginRuntime | null = null;
@@ -37,6 +36,57 @@ export interface ProluofireImRuntimeState {
 
 const runtimeStates = new Map<string, ProluofireImRuntimeState>();
 const clientRegistry = new Map<string, ProluofireImClient>();
+const directRoomRegistry = new Map<string, Map<string, string>>();
+
+function normalizeNumericId(value: string): string {
+  const trimmed = value.trim();
+  return /^\d+$/.test(trimmed) ? trimmed : "";
+}
+
+function normalizeUserIdFromTarget(target: string): string {
+  const trimmed = target.trim();
+  if (!trimmed) return "";
+  const withoutChannel = trimmed.replace(/^proluofire-im:/i, "");
+  const lower = withoutChannel.toLowerCase();
+  const withoutPrefix = lower.startsWith("user:") ? withoutChannel.slice(5) : withoutChannel;
+  const withoutSymbol =
+    withoutPrefix.startsWith("@") || withoutPrefix.startsWith("#")
+      ? withoutPrefix.slice(1)
+      : withoutPrefix;
+  return normalizeNumericId(withoutSymbol);
+}
+
+/**
+ * Bind a direct-chat sender user ID to the current room ID.
+ */
+export function bindDirectRoomForUser(params: {
+  accountId: string;
+  userId: string;
+  roomId: string;
+}): void {
+  const accountId = params.accountId.trim();
+  const userId = normalizeNumericId(params.userId);
+  const roomId = normalizeNumericId(params.roomId);
+  if (!accountId || !userId || !roomId) return;
+  const byUser = directRoomRegistry.get(accountId) ?? new Map<string, string>();
+  byUser.set(userId, roomId);
+  directRoomRegistry.set(accountId, byUser);
+}
+
+/**
+ * Resolve the room ID for a direct user target.
+ */
+export function resolveDirectRoomForTarget(params: {
+  accountId: string;
+  target: string;
+}): string | null {
+  const accountId = params.accountId.trim();
+  if (!accountId) return null;
+  const userId = normalizeUserIdFromTarget(params.target);
+  if (!userId) return null;
+  const byUser = directRoomRegistry.get(accountId);
+  return byUser?.get(userId) ?? null;
+}
 
 /**
  * Get runtime state for an account

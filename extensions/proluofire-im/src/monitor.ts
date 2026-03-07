@@ -26,12 +26,13 @@ import {
   normalizeTarget,
 } from "./protocol.js";
 import {
+  bindDirectRoomForUser,
   getProluofireImRuntime,
   markInboundMessage,
   registerClientForAccount,
   unregisterClientForAccount,
 } from "./runtime.js";
-import { sendMessageProluofireIm } from "./send.js";
+import { sendMessageProluofireIm, sendMessageWithMedia } from "./send.js";
 import {
   handleWebhookRequest,
   registerClientForWebhook,
@@ -568,6 +569,14 @@ async function handleIncomingMessage(params: {
 
   const identity = identifyMessageParticipants({ message, decoded, account });
 
+  if (!identity.isGroup && identity.senderId && message.roomId) {
+    bindDirectRoomForUser({
+      accountId: account.accountId,
+      userId: identity.senderId,
+      roomId: String(message.roomId),
+    });
+  }
+
   if (isSelfMessage({ senderId: identity.senderId, account, message })) {
     runtime.log(`[proluofire-im] drop self message senderId=${identity.senderId}`);
     return;
@@ -741,12 +750,15 @@ async function handleIncomingMessage(params: {
     : message.roomId
       ? String(message.roomId)
       : formatProluofireImUserEntry(identity.senderId || identity.fromTarget);
+  const contextToTarget = identity.isGroup
+    ? identity.toTarget || message.to || replyTarget
+    : replyTarget;
   const ctxPayload = core.channel.reply.finalizeInboundContext({
     Body: body,
     RawBody: rawBody,
     CommandBody: rawBody,
     From: `proluofire-im:${identity.fromTarget || message.from || ""}`,
-    To: `proluofire-im:${identity.toTarget || message.to || ""}`,
+    To: `proluofire-im:${contextToTarget}`,
     SessionKey: route.sessionKey,
     AccountId: route.accountId,
     ChatType: identity.isGroup ? "group" : "direct",
@@ -836,18 +848,32 @@ async function deliverProluofireImReply(params: {
     : payload.mediaUrl
       ? [payload.mediaUrl]
       : [];
+  const normalizedMediaList = mediaList.map((item) => item.trim()).filter(Boolean);
 
-  if (!text.trim() && mediaList.length === 0) return;
+  if (!text.trim() && normalizedMediaList.length === 0) return;
 
-  if (mediaList.length > 0 && !text.trim()) return;
+  if (normalizedMediaList.length === 0) {
+    await sendMessageProluofireIm(target, text, {
+      cfg: config,
+      accountId,
+      replyToId: payload.replyToId,
+      threadId,
+    });
+    statusSink?.({ lastOutboundAt: Date.now() });
+    return;
+  }
 
-  await sendMessageProluofireIm(target, text, {
-    cfg: config,
-    accountId,
-    replyToId: payload.replyToId,
-    threadId,
-  });
-  statusSink?.({ lastOutboundAt: Date.now() });
+  for (let index = 0; index < normalizedMediaList.length; index += 1) {
+    const mediaPath = normalizedMediaList[index];
+    const caption = index === 0 ? text : "";
+    await sendMessageWithMedia(target, caption, [{ path: mediaPath, type: "" }], {
+      cfg: config,
+      accountId,
+      replyToId: payload.replyToId,
+      threadId,
+    });
+    statusSink?.({ lastOutboundAt: Date.now() });
+  }
 }
 
 async function downloadAttachment(params: {
