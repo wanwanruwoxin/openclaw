@@ -8,22 +8,34 @@ describe("splitMediaFromOutput", () => {
     expect(result.text).toBe("Hello world");
   });
 
-  it("rejects absolute media paths to prevent LFI", () => {
+  it("accepts absolute media paths", () => {
     const result = splitMediaFromOutput("MEDIA:/Users/pete/My File.png");
-    expect(result.mediaUrls).toBeUndefined();
-    expect(result.text).toBe("MEDIA:/Users/pete/My File.png");
+    expect(result.mediaUrls).toEqual(["/Users/pete/My File.png"]);
+    expect(result.text).toBe("");
   });
 
-  it("rejects quoted absolute media paths to prevent LFI", () => {
+  it("accepts quoted absolute media paths", () => {
     const result = splitMediaFromOutput('MEDIA:"/Users/pete/My File.png"');
-    expect(result.mediaUrls).toBeUndefined();
-    expect(result.text).toBe('MEDIA:"/Users/pete/My File.png"');
+    expect(result.mediaUrls).toEqual(["/Users/pete/My File.png"]);
+    expect(result.text).toBe("");
   });
 
-  it("rejects tilde media paths to prevent LFI", () => {
+  it("accepts tilde media paths", () => {
     const result = splitMediaFromOutput("MEDIA:~/Pictures/My File.png");
-    expect(result.mediaUrls).toBeUndefined();
-    expect(result.text).toBe("MEDIA:~/Pictures/My File.png");
+    expect(result.mediaUrls).toEqual(["~/Pictures/My File.png"]);
+    expect(result.text).toBe("");
+  });
+
+  it("accepts file URLs", () => {
+    const result = splitMediaFromOutput("MEDIA:file:///Users/pete/My%20File.png");
+    expect(result.mediaUrls).toEqual(["/Users/pete/My File.png"]);
+    expect(result.text).toBe("");
+  });
+
+  it("accepts Windows absolute media paths", () => {
+    const result = splitMediaFromOutput("MEDIA:C:\\Users\\pete\\My File.png");
+    expect(result.mediaUrls).toEqual(["C:\\Users\\pete\\My File.png"]);
+    expect(result.text).toBe("");
   });
 
   it("rejects directory traversal media paths to prevent LFI", () => {

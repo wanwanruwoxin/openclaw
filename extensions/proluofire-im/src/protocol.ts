@@ -108,14 +108,11 @@ export function decodeMessage(message: ProluofireImMessage): {
  * - Fall back to plain text if formatting not supported
  */
 export function convertMarkdownToProluofireIm(markdown: string): string {
-  // TODO: Replace with actual markdown conversion
-  // Options:
-  // 1. If proluofire-im supports markdown natively, pass through
-  // 2. If it uses different syntax, convert (e.g., *bold* to <b>bold</b>)
-  // 3. If no formatting support, strip markdown and return plain text
-
-  // Stub: pass through as-is
-  return markdown;
+  // GPUI markdown currently warns on hard-break nodes; normalize to plain newlines.
+  return markdown
+    .replace(/\\\r?\n/g, "\n")
+    .replace(/[ \t]{2,}\r?\n/g, "\n")
+    .replace(/<br\s*\/?>/gi, "\n");
 }
 
 /**

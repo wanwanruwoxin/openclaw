@@ -1,7 +1,7 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
-
 import { proluofireImPlugin } from "./src/channel.js";
+import { createProluofireImageGenerateTool } from "./src/dashscope-image-tool.js";
 import { handleProluofireImWebhookRequest } from "./src/monitor.js";
 import { setProluofireImRuntime } from "./src/runtime.js";
 
@@ -14,6 +14,9 @@ const plugin = {
     setProluofireImRuntime(api.runtime);
     api.registerChannel({ plugin: proluofireImPlugin });
     api.registerHttpHandler(handleProluofireImWebhookRequest);
+    api.registerTool((context) => createProluofireImageGenerateTool(api, context), {
+      name: "proluofire_image_generate",
+    });
   },
 };
 

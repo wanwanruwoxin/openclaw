@@ -1,5 +1,7 @@
 // Shared helpers for parsing MEDIA tokens from command/stdout text.
 
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseFenceSpans } from "../markdown/fences.js";
 import { parseAudioTag } from "./audio-tags.js";
 
@@ -7,11 +9,22 @@ import { parseAudioTag } from "./audio-tags.js";
 export const MEDIA_TOKEN_RE = /\bMEDIA:\s*`?([^\n]+)`?/gi;
 
 export function normalizeMediaSource(src: string) {
-  return src.startsWith("file://") ? src.replace("file://", "") : src;
+  if (!src.startsWith("file://")) {
+    return src;
+  }
+  try {
+    return fileURLToPath(src);
+  } catch {
+    return "";
+  }
 }
 
 function cleanCandidate(raw: string) {
   return raw.replace(/^[`"'[{(]+/, "").replace(/[`"'\\})\],]+$/, "");
+}
+
+function hasTraversalSegment(candidate: string): boolean {
+  return candidate.split(/[\\/]+/).includes("..");
 }
 
 function isValidMedia(candidate: string, opts?: { allowSpaces?: boolean }) {
@@ -28,8 +41,20 @@ function isValidMedia(candidate: string, opts?: { allowSpaces?: boolean }) {
     return true;
   }
 
-  // Local paths: only allow safe relative paths starting with ./ that do not traverse upwards.
-  return candidate.startsWith("./") && !candidate.includes("..");
+  // Local paths: allow absolute/home/file paths and safe relative ./ paths.
+  if (candidate.startsWith("./") || candidate.startsWith(".\\")) {
+    return !hasTraversalSegment(candidate);
+  }
+  if (candidate.startsWith("../") || candidate.startsWith("..\\")) {
+    return false;
+  }
+  if (/^~(?:[\\/]|$)/.test(candidate)) {
+    return true;
+  }
+  if (path.isAbsolute(candidate) || /^[a-zA-Z]:[\\/]/.test(candidate)) {
+    return true;
+  }
+  return false;
 }
 
 function unwrapQuoted(value: string): string | undefined {
@@ -130,9 +155,13 @@ export function splitMediaFromOutput(raw: string): {
       const looksLikeLocalPath =
         trimmedPayload.startsWith("/") ||
         trimmedPayload.startsWith("./") ||
+        trimmedPayload.startsWith(".\\") ||
         trimmedPayload.startsWith("../") ||
+        trimmedPayload.startsWith("..\\") ||
         trimmedPayload.startsWith("~") ||
-        trimmedPayload.startsWith("file://");
+        trimmedPayload.startsWith("file://") ||
+        /^[a-zA-Z]:[\\/]/.test(trimmedPayload) ||
+        trimmedPayload.startsWith("\\\\");
       if (
         !unwrapped &&
         validCount === 1 &&

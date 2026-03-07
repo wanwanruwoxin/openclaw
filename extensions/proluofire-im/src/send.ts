@@ -290,10 +290,6 @@ function normalizePositiveInteger(value: unknown): number | undefined {
   return normalized > 0 ? normalized : undefined;
 }
 
-function isHttpUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value.trim());
-}
-
 function resolveExtensionFromPathOrUrl(source: string): string {
   const trimmed = source.trim();
   if (!trimmed) return "";
@@ -308,28 +304,6 @@ function resolveExtensionFromPathOrUrl(source: string): string {
     const index = normalized.lastIndexOf(".");
     if (index < 0) return "";
     return normalized.slice(index).toLowerCase();
-  }
-}
-
-function resolveMimeTypeHint(source: string, explicitMimeType?: string): string {
-  const hinted = explicitMimeType?.trim().toLowerCase();
-  if (hinted) return hinted;
-  const ext = resolveExtensionFromPathOrUrl(source);
-  return MIME_BY_EXTENSION[ext] || "application/octet-stream";
-}
-
-function inferFilenameFromPathOrUrl(source: string): string | undefined {
-  const trimmed = source.trim();
-  if (!trimmed) return undefined;
-  try {
-    const url = new URL(trimmed);
-    const segments = url.pathname.split("/").filter(Boolean);
-    const last = segments.at(-1);
-    return last ? decodeURIComponent(last) : undefined;
-  } catch {
-    const normalized = trimmed.replace(/^file:\/\//i, "").replace(/[?#].*$/, "");
-    const segments = normalized.split("/").filter(Boolean);
-    return segments.at(-1);
   }
 }
 
@@ -520,42 +494,6 @@ export async function sendMessageWithMedia(
     if (!mediaPath) {
       continue;
     }
-    if (isHttpUrl(mediaPath)) {
-      const hintedMimeType = resolveMimeTypeHint(mediaPath, attachment.type);
-      const remoteAttachment: ProluofireImAttachment = {
-        id: `remote_${Date.now()}_${uploaded.length}`,
-        type: hintedMimeType,
-        url: mediaPath,
-        filename: inferFilenameFromPathOrUrl(mediaPath),
-        mimeType: hintedMimeType,
-      };
-      try {
-        const loaded = await runtime.media.loadWebMedia(mediaPath, maxSizeMb * 1024 * 1024);
-        if (loaded.contentType?.trim()) {
-          remoteAttachment.type = loaded.contentType.trim();
-          remoteAttachment.mimeType = loaded.contentType.trim();
-        }
-        if (loaded.fileName?.trim()) {
-          remoteAttachment.filename = loaded.fileName.trim();
-        }
-        if (loaded.buffer.length > 0) {
-          remoteAttachment.size = loaded.buffer.length;
-        }
-        const resolvedType = resolveMediaContentType(remoteAttachment);
-        if (resolvedType === PROLUOFIRE_IM_CONTENT_TYPE.Image) {
-          const meta = await runtime.media
-            .getImageMetadata(Buffer.from(loaded.buffer))
-            .catch(() => null);
-          remoteAttachment.width = normalizePositiveInteger(meta?.width);
-          remoteAttachment.height = normalizePositiveInteger(meta?.height);
-        }
-      } catch {
-        // Best-effort metadata for remote URLs; sending direct file_url is still valid.
-      }
-      uploaded.push(remoteAttachment);
-      continue;
-    }
-
     uploaded.push(
       await uploadMedia({
         cfg,

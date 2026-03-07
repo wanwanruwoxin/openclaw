@@ -24,6 +24,82 @@ vi.mock("./runtime.js", () => ({
 
 import { proluofireImOutbound } from "./outbound.js";
 
+describe("proluofireImOutbound.sendText", () => {
+  beforeEach(() => {
+    mocks.sendMessageProluofireIm.mockReset();
+    mocks.sendMessageWithMedia.mockReset();
+  });
+
+  it("extracts markdown image links and sends media payloads", async () => {
+    const cfg = { channels: {} } as OpenClawConfig;
+    mocks.sendMessageWithMedia.mockResolvedValue({
+      messageId: "m-inline-media",
+      to: "#42",
+    });
+
+    const result = await proluofireImOutbound.sendText?.({
+      cfg,
+      to: "#42",
+      text: "图在这里\n![preview](https://example.com/image.png)\n请查看",
+      accountId: "work",
+      replyToId: "100",
+      threadId: "thread-inline",
+    });
+
+    expect(mocks.sendMessageWithMedia).toHaveBeenCalledWith(
+      "#42",
+      "图在这里\n请查看",
+      [{ path: "https://example.com/image.png", type: "" }],
+      {
+        cfg,
+        accountId: "work",
+        replyToId: "100",
+        threadId: "thread-inline",
+      },
+    );
+    expect(mocks.sendMessageProluofireIm).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      channel: "proluofire-im",
+      messageId: "m-inline-media",
+      to: "#42",
+    });
+  });
+
+  it("keeps regular markdown links as text", async () => {
+    const cfg = { channels: {} } as OpenClawConfig;
+    mocks.sendMessageProluofireIm.mockResolvedValue({
+      messageId: "m-text",
+      to: "#42",
+    });
+
+    const result = await proluofireImOutbound.sendText?.({
+      cfg,
+      to: "#42",
+      text: "参考文档: [README](https://example.com/readme)",
+      accountId: "work",
+      replyToId: null,
+      threadId: null,
+    });
+
+    expect(mocks.sendMessageProluofireIm).toHaveBeenCalledWith(
+      "#42",
+      "参考文档: [README](https://example.com/readme)",
+      {
+        cfg,
+        accountId: "work",
+        replyToId: undefined,
+        threadId: undefined,
+      },
+    );
+    expect(mocks.sendMessageWithMedia).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      channel: "proluofire-im",
+      messageId: "m-text",
+      to: "#42",
+    });
+  });
+});
+
 describe("proluofireImOutbound.sendMedia", () => {
   beforeEach(() => {
     mocks.sendMessageProluofireIm.mockReset();

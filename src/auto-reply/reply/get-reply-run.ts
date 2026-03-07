@@ -51,6 +51,9 @@ type ExecOverrides = Pick<ExecToolDefaults, "host" | "security" | "ask" | "node"
 const BARE_SESSION_RESET_PROMPT =
   "A new session was started via /new or /reset. Greet the user in your configured persona, if one is provided. Be yourself - use your defined voice, mannerisms, and mood. Keep it to 1-3 sentences and ask what they want to do. If the runtime model differs from default_model in the system prompt, mention the default model. Do not mention internal steps, files, tools, or reasoning.";
 
+const LOCAL_MEDIA_PATH_HINT_RE =
+  /(?:file:\/\/\S+|~[\\/]\S+|[A-Za-z]:[\\/]\S+|\/(?:Users|home|tmp|var|opt|mnt)[/\\]\S+)/;
+
 type RunPreparedReplyParams = {
   ctx: MsgContext;
   sessionCtx: TemplateContext;
@@ -250,12 +253,21 @@ export async function runPreparedReply(
   const skillsSnapshot = skillResult.skillsSnapshot;
   const prefixedBody = [threadStarterNote, prefixedBodyBase].filter(Boolean).join("\n\n");
   const mediaNote = buildInboundMediaNote(ctx);
+  const hasLocalMediaPathHint = LOCAL_MEDIA_PATH_HINT_RE.test(baseBodyFinal);
   const mediaReplyHint = mediaNote
-    ? "To send an image back, prefer the message tool (media/path/filePath). If you must inline, use MEDIA:https://example.com/image.jpg (spaces ok, quote if needed) or a safe relative path like MEDIA:./image.jpg. Avoid absolute paths (MEDIA:/...) and ~ paths — they are blocked for security. Keep caption in the text body."
+    ? "To send an image back, prefer the message tool (media/path/filePath). If you must inline, use MEDIA:https://example.com/image.jpg, MEDIA:/abs/path/image.jpg, MEDIA:~/Pictures/image.jpg, or MEDIA:./image.jpg (spaces ok, quote if needed). Keep caption in the text body."
+    : undefined;
+  const directPathReplyHint = hasLocalMediaPathHint
+    ? "If the user gives a local media path, use that path directly with the message tool (media/path/filePath). Do not copy files into workspace first unless sandbox mode explicitly blocks that path."
     : undefined;
   let prefixedCommandBody = mediaNote
-    ? [mediaNote, mediaReplyHint, prefixedBody ?? ""].filter(Boolean).join("\n").trim()
-    : prefixedBody;
+    ? [mediaNote, mediaReplyHint, directPathReplyHint, prefixedBody ?? ""]
+        .filter(Boolean)
+        .join("\n")
+        .trim()
+    : directPathReplyHint
+      ? [directPathReplyHint, prefixedBody ?? ""].filter(Boolean).join("\n").trim()
+      : prefixedBody;
   if (!resolvedThinkLevel && prefixedCommandBody) {
     const parts = prefixedCommandBody.split(/\s+/);
     const maybeLevel = normalizeThinkLevel(parts[0]);
